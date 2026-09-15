@@ -1,0 +1,40 @@
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.status-new {
+  background: var(--status-new-bg);
+  color: var(--status-new-text);
+}
+
+.status-contacted {
+  background: var(--status-contacted-bg);
+  color: var(--status-contacted-text);
+}
+
+.status-sample {
+  background: var(--status-sample-bg);
+  color: var(--status-sample-text);
+}
+
+.status-offer {
+  background: var(--status-offer-bg);
+  color: var(--status-offer-text);
+}
+
+.status-won {
+  background: var(--status-won-bg);
+  color: var(--status-won-text);
+}
+
+.status-lost {
+  background: var(--status-lost-bg);
+  color: var(--status-lost-text);
+}
