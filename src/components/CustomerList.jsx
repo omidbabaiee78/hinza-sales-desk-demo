@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { STATUS_OPTIONS } from '../data/seedCustomers'
+import { isOverdue } from '../utils/followUp'
 import StatusBadge from './StatusBadge'
 import CustomerForm from './CustomerForm'
 import './CustomerList.css'
 
-export default function CustomerList({ customers, onAdd, onUpdate }) {
+export default function CustomerList({ customers, onAdd, onUpdate, onDelete }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
   const [editingCustomer, setEditingCustomer] = useState(null)
@@ -31,6 +32,13 @@ export default function CustomerList({ customers, onAdd, onUpdate }) {
   function handleEditSave(customer) {
     onUpdate(editingCustomer.id, customer)
     setEditingCustomer(null)
+  }
+
+  function handleDelete(customer) {
+    const confirmed = window.confirm(
+      `Delete ${customer.company}? This cannot be undone.`,
+    )
+    if (confirmed) onDelete(customer.id)
   }
 
   return (
@@ -80,31 +88,44 @@ export default function CustomerList({ customers, onAdd, onUpdate }) {
             </tr>
           </thead>
           <tbody>
-            {filteredCustomers.map((c) => (
-              <tr key={c.id}>
-                <td className="cell-company">{c.company}</td>
-                <td>{c.contact}</td>
-                <td>{c.phone}</td>
-                <td>{c.city}</td>
-                <td>{c.product}</td>
-                <td>
-                  <StatusBadge status={c.status} />
-                </td>
-                <td>{c.nextFollowUp || '—'}</td>
-                <td className="cell-notes" title={c.notes}>
-                  {c.notes || '—'}
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    className="btn-link"
-                    onClick={() => setEditingCustomer(c)}
-                  >
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {filteredCustomers.map((c) => {
+              const overdue = isOverdue(c)
+              return (
+                <tr key={c.id} className={overdue ? 'row-overdue' : ''}>
+                  <td className="cell-company">{c.company}</td>
+                  <td>{c.contact}</td>
+                  <td>{c.phone}</td>
+                  <td>{c.city}</td>
+                  <td>{c.product}</td>
+                  <td>
+                    <StatusBadge status={c.status} />
+                  </td>
+                  <td className={overdue ? 'cell-followup overdue' : 'cell-followup'}>
+                    {c.nextFollowUp || '—'}
+                    {overdue && <span className="overdue-tag">Overdue</span>}
+                  </td>
+                  <td className="cell-notes" title={c.notes}>
+                    {c.notes || '—'}
+                  </td>
+                  <td className="cell-actions">
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => setEditingCustomer(c)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link btn-link-danger"
+                      onClick={() => handleDelete(c)}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
             {filteredCustomers.length === 0 && (
               <tr>
                 <td colSpan={9} className="empty-row">

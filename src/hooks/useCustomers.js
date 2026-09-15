@@ -31,5 +31,9 @@ export function useCustomers() {
     )
   }
 
-  return { customers, addCustomer, updateCustomer }
+  function deleteCustomer(id) {
+    setCustomers((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  return { customers, addCustomer, updateCustomer, deleteCustomer }
 }

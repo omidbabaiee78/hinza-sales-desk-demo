@@ -5,7 +5,8 @@ import CustomerList from './components/CustomerList'
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
-  const { customers, addCustomer, updateCustomer } = useCustomers()
+  const { customers, addCustomer, updateCustomer, deleteCustomer } =
+    useCustomers()
 
   return (
     <div className="app-shell">
@@ -39,6 +40,7 @@ function App() {
             customers={customers}
             onAdd={addCustomer}
             onUpdate={updateCustomer}
+            onDelete={deleteCustomer}
           />
         )}
       </main>
