@@ -44,6 +44,42 @@
   color: var(--status-lost-text, #b91c1c);
 }
 
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: var(--text-muted);
+}
+
+.info-value {
+  color: var(--text-h);
+  font-weight: 500;
+}
+
+.profile-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.success-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  background: var(--status-won-bg, #dcfce7);
+  color: var(--status-won-text, #15803d);
+}
+
 .loading-screen {
   min-height: 100vh;
   display: flex;

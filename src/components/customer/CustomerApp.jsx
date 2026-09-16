@@ -3,6 +3,9 @@ import AppShell from '../layout/AppShell'
 import PlaceholderSection from '../common/PlaceholderSection'
 import CustomerDashboard from './CustomerDashboard'
 import CompanyProfile from './CompanyProfile'
+import NewOrderPage from './NewOrderPage'
+import CustomerOrdersPage from './CustomerOrdersPage'
+import CustomerOrderDetail from './CustomerOrderDetail'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد من' },
@@ -14,14 +17,18 @@ const NAV_ITEMS = [
 ]
 
 const PLACEHOLDER_TITLES = {
-  newOrder: 'ثبت سفارش',
-  orders: 'سفارش‌های من',
   invoices: 'فاکتورها',
   account: 'حساب و پرداخت‌ها',
 }
 
 export default function CustomerApp({ profile, company, onSignOut }) {
   const [activeKey, setActiveKey] = useState('dashboard')
+  const [selectedOrderId, setSelectedOrderId] = useState(null)
+
+  function navigate(key) {
+    setActiveKey(key)
+    setSelectedOrderId(null)
+  }
 
   return (
     <AppShell
@@ -29,13 +36,30 @@ export default function CustomerApp({ profile, company, onSignOut }) {
       subtitle={company?.name || 'پرتال مشتریان'}
       navItems={NAV_ITEMS}
       activeKey={activeKey}
-      onNavigate={setActiveKey}
+      onNavigate={navigate}
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
     >
       {activeKey === 'dashboard' && (
-        <CustomerDashboard company={company} onNavigate={setActiveKey} />
+        <CustomerDashboard company={company} onNavigate={navigate} />
       )}
+      {activeKey === 'newOrder' && (
+        <NewOrderPage
+          onCreated={(orderId) => {
+            setActiveKey('orders')
+            setSelectedOrderId(orderId)
+          }}
+        />
+      )}
+      {activeKey === 'orders' &&
+        (selectedOrderId ? (
+          <CustomerOrderDetail
+            orderId={selectedOrderId}
+            onBack={() => setSelectedOrderId(null)}
+          />
+        ) : (
+          <CustomerOrdersPage company={company} onOpenOrder={setSelectedOrderId} />
+        ))}
       {activeKey === 'profile' && (
         <CompanyProfile profile={profile} company={company} />
       )}

@@ -3,6 +3,9 @@ import AppShell from '../layout/AppShell'
 import PlaceholderSection from '../common/PlaceholderSection'
 import AdminDashboard from './AdminDashboard'
 import RegistrationRequestsPage from './RegistrationRequestsPage'
+import AdminOrdersPage from './AdminOrdersPage'
+import AdminOrderDetail from './AdminOrderDetail'
+import ProductsPage from './ProductsPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
@@ -17,8 +20,6 @@ const NAV_ITEMS = [
 
 const PLACEHOLDER_TITLES = {
   customers: 'مشتریان',
-  orders: 'سفارش‌ها',
-  products: 'محصولات',
   invoices: 'فاکتورها',
   payments: 'پرداخت‌ها',
   followUps: 'پیگیری‌ها',
@@ -26,6 +27,12 @@ const PLACEHOLDER_TITLES = {
 
 export default function AdminApp({ profile, onSignOut }) {
   const [activeKey, setActiveKey] = useState('dashboard')
+  const [selectedOrderId, setSelectedOrderId] = useState(null)
+
+  function navigate(key) {
+    setActiveKey(key)
+    setSelectedOrderId(null)
+  }
 
   return (
     <AppShell
@@ -33,14 +40,22 @@ export default function AdminApp({ profile, onSignOut }) {
       subtitle="مدیریت فروش B2B"
       navItems={NAV_ITEMS}
       activeKey={activeKey}
-      onNavigate={setActiveKey}
+      onNavigate={navigate}
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
     >
-      {activeKey === 'dashboard' && (
-        <AdminDashboard onNavigate={setActiveKey} />
-      )}
+      {activeKey === 'dashboard' && <AdminDashboard onNavigate={navigate} />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
+      {activeKey === 'orders' &&
+        (selectedOrderId ? (
+          <AdminOrderDetail
+            orderId={selectedOrderId}
+            onBack={() => setSelectedOrderId(null)}
+          />
+        ) : (
+          <AdminOrdersPage onOpenOrder={setSelectedOrderId} />
+        ))}
+      {activeKey === 'products' && <ProductsPage />}
       {PLACEHOLDER_TITLES[activeKey] && (
         <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />
       )}

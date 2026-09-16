@@ -37,6 +37,13 @@ tbody tr:hover {
   background: var(--surface-hover);
 }
 
+.cell-notes {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-row {
   text-align: center;
   color: var(--text-muted);

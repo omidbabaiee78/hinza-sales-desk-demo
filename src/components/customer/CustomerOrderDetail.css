@@ -1,0 +1,81 @@
+.simple-order-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 14px;
+}
+
+.simple-item-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+
+.simple-item-row:last-of-type {
+  border-bottom: none;
+}
+
+.simple-item-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-h);
+  flex-basis: 100%;
+}
+
+.simple-item-qty {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.simple-item-price,
+.simple-item-discount {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.simple-total-row,
+.simple-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 15px;
+}
+
+.simple-total-row strong {
+  font-size: 18px;
+  color: var(--text-h);
+}
+
+.btn-block {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.simple-message {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 14px;
+  color: var(--text-h);
+  text-align: center;
+}
+
+.simple-message.success {
+  background: var(--status-won-bg, #dcfce7);
+  color: var(--status-won-text, #15803d);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.order-extra-details {
+  margin-top: 6px;
+}

@@ -1,0 +1,15 @@
+.jalali-date-input {
+  display: flex;
+  gap: 8px;
+}
+
+.jalali-date-input select {
+  font: inherit;
+  padding: 9px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-h);
+  min-width: 0;
+  flex: 1;
+}

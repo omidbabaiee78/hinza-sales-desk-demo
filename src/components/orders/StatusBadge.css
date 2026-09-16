@@ -1,0 +1,26 @@
+.order-status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.order-status-badge.tone-warning {
+  background: var(--status-offer-bg, #ffedd5);
+  color: var(--status-offer-text, #c2410c);
+}
+
+.order-status-badge.tone-success {
+  background: var(--status-won-bg, #dcfce7);
+  color: var(--status-won-text, #15803d);
+}
+
+.order-status-badge.tone-danger {
+  background: var(--status-lost-bg, #fee2e2);
+  color: var(--status-lost-text, #b91c1c);
+}

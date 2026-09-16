@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { TERMINAL_STATUSES } from '../utils/orderStatus'
 
-const CLOSED_ORDER_STATUSES = ['delivered', 'completed', 'cancelled']
 const SETTLED_INVOICE_STATUSES = ['paid', 'cancelled']
 
 function translateDbError(message) {
@@ -60,7 +60,7 @@ export function useCustomerDashboardData(companyId) {
       const orders = ordersRes.data || []
       const invoices = invoicesRes.data || []
       const activeOrders = orders.filter(
-        (o) => !CLOSED_ORDER_STATUSES.includes(o.status),
+        (o) => !TERMINAL_STATUSES.includes(o.status),
       ).length
       const previousOrders = orders.length - activeOrders
       const unpaidInvoices = invoices.filter(

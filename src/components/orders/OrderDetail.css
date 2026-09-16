@@ -1,0 +1,72 @@
+.order-detail .page-toolbar h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.order-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 720px) {
+  .order-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.order-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.order-detail-card h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+}
+
+.order-detail h3 {
+  margin: 24px 0 12px;
+  font-size: 16px;
+}
+
+.order-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.details-toggle {
+  display: block;
+  margin: 16px 0 4px;
+  font-size: 13px;
+}
+
+.reject-action {
+  display: block;
+  margin-top: 10px;
+}
+
+.admin-note-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 12px;
+}
+
+.admin-note-field textarea {
+  font: inherit;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  resize: vertical;
+}
