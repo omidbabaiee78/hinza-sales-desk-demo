@@ -3,40 +3,38 @@ import { supabase } from '../lib/supabaseClient'
 
 function translateDbError(message) {
   if (!message) return 'خطایی رخ داد. لطفاً دوباره تلاش کنید.'
-  if (message.includes('duplicate key')) return 'این رکورد قبلاً ثبت شده است.'
   if (message.includes('Failed to fetch') || message.includes('network')) {
     return 'ارتباط با سرور برقرار نشد. اتصال اینترنت را بررسی کنید.'
   }
   return 'خطا در ارتباط با پایگاه داده. لطفاً دوباره تلاش کنید.'
 }
 
-async function fetchCustomers() {
+function fetchPendingRequests() {
   return supabase
-    .from('customers')
+    .from('registration_requests')
     .select('*')
-    .order('created_at', { ascending: false })
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
 }
 
-export function useCustomers() {
-  const [customers, setCustomers] = useState([])
+export function useRegistrationRequests() {
+  const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     let ignore = false
-
-    fetchCustomers().then(({ data, error: loadError }) => {
+    fetchPendingRequests().then(({ data, error: loadError }) => {
       if (ignore) return
       if (loadError) {
         setError(translateDbError(loadError.message))
       } else {
         setError('')
-        setCustomers(data)
+        setRequests(data)
       }
       setLoading(false)
     })
-
     return () => {
       ignore = true
     }
@@ -47,52 +45,49 @@ export function useCustomers() {
     setReloadToken((token) => token + 1)
   }
 
-  async function addCustomer(customer) {
+  async function approveRequest(id) {
     const {
       data: { user },
     } = await supabase.auth.getUser()
 
-    const { data, error: insertError } = await supabase
-      .from('customers')
-      .insert({ ...customer, user_id: user.id })
-      .select()
-      .single()
-
-    if (insertError) throw new Error(translateDbError(insertError.message))
-    setCustomers((prev) => [data, ...prev])
-    return data
-  }
-
-  async function updateCustomer(id, updates) {
-    const { data, error: updateError } = await supabase
-      .from('customers')
-      .update(updates)
+    const { error: updateError } = await supabase
+      .from('registration_requests')
+      .update({
+        status: 'approved',
+        reviewed_by: user.id,
+        reviewed_at: new Date().toISOString(),
+      })
       .eq('id', id)
-      .select()
-      .single()
 
     if (updateError) throw new Error(translateDbError(updateError.message))
-    setCustomers((prev) => prev.map((c) => (c.id === id ? data : c)))
-    return data
+    refresh()
   }
 
-  async function deleteCustomer(id) {
-    const { error: deleteError } = await supabase
-      .from('customers')
-      .delete()
+  async function rejectRequest(id, note) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const { error: updateError } = await supabase
+      .from('registration_requests')
+      .update({
+        status: 'rejected',
+        admin_note: note || null,
+        reviewed_by: user.id,
+        reviewed_at: new Date().toISOString(),
+      })
       .eq('id', id)
 
-    if (deleteError) throw new Error(translateDbError(deleteError.message))
-    setCustomers((prev) => prev.filter((c) => c.id !== id))
+    if (updateError) throw new Error(translateDbError(updateError.message))
+    refresh()
   }
 
   return {
-    customers,
+    requests,
     loading,
     error,
-    addCustomer,
-    updateCustomer,
-    deleteCustomer,
+    approveRequest,
+    rejectRequest,
     refresh,
   }
 }
