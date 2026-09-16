@@ -47,6 +47,12 @@
   }
 }
 
+.auth-hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .auth-panel label {
   display: flex;
   flex-direction: column;

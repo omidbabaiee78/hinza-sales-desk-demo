@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 export default function LoginForm({ onSignIn, onSwitchToRegister }) {
-  const [mobile, setMobile] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -9,13 +9,13 @@ export default function LoginForm({ onSignIn, onSwitchToRegister }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    if (!mobile.trim() || !password.trim()) {
+    if (!identifier.trim() || !password.trim()) {
       setError('لطفاً شماره موبایل و رمز عبور را وارد کنید.')
       return
     }
     setSubmitting(true)
     try {
-      await onSignIn(mobile.trim(), password)
+      await onSignIn(identifier.trim(), password)
     } catch (err) {
       setError(err.message || 'خطایی رخ داد. لطفاً دوباره تلاش کنید.')
     } finally {
@@ -32,15 +32,17 @@ export default function LoginForm({ onSignIn, onSwitchToRegister }) {
         <label>
           شماره موبایل
           <input
-            type="tel"
+            type="text"
             dir="ltr"
-            autoComplete="tel"
+            inputMode="tel"
+            autoComplete="username"
             placeholder="09xxxxxxxxx"
-            value={mobile}
-            onChange={(e) => setMobile(e.target.value)}
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             required
           />
         </label>
+        <p className="auth-hint">مدیر سیستم می‌تواند با ایمیل وارد شود</p>
         <label>
           رمز عبور
           <input

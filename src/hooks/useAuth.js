@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import * as authService from '../lib/authService'
-import { toE164Iran } from '../utils/phone'
 
 export function useAuth() {
   const [session, setSession] = useState(null)
@@ -27,12 +26,8 @@ export function useAuth() {
     }
   }, [])
 
-  async function signIn(phone, password) {
-    await authService.signInWithPhone(toE164Iran(phone), password)
-  }
-
-  async function signUp(phone, password) {
-    return authService.signUpWithPhone(toE164Iran(phone), password)
+  async function signIn(identifier, password) {
+    await authService.signInWithIdentifier(identifier, password)
   }
 
   async function signOut() {
@@ -44,7 +39,6 @@ export function useAuth() {
     user: session?.user ?? null,
     loading,
     signIn,
-    signUp,
     signOut,
   }
 }

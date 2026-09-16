@@ -41,8 +41,8 @@ export default function RegisterForm({ onRegistered, onSwitchToLogin }) {
       setError('شماره موبایل را به‌صورت صحیح وارد کنید.')
       return
     }
-    if (form.password.length < 6) {
-      setError('رمز عبور باید حداقل ۶ کاراکتر باشد.')
+    if (form.password.length < 8) {
+      setError('رمز عبور باید حداقل ۸ کاراکتر باشد.')
       return
     }
     if (form.password !== form.repeatPassword) {
@@ -91,6 +91,8 @@ export default function RegisterForm({ onRegistered, onSwitchToLogin }) {
             <input
               type="tel"
               dir="ltr"
+              inputMode="tel"
+              autoComplete="tel"
               required
               placeholder="09xxxxxxxxx"
               value={form.mobile}
@@ -134,6 +136,7 @@ export default function RegisterForm({ onRegistered, onSwitchToLogin }) {
             رمز عبور *
             <input
               type="password"
+              autoComplete="new-password"
               required
               value={form.password}
               onChange={(e) => handleChange('password', e.target.value)}
@@ -143,6 +146,7 @@ export default function RegisterForm({ onRegistered, onSwitchToLogin }) {
             تکرار رمز عبور *
             <input
               type="password"
+              autoComplete="new-password"
               required
               value={form.repeatPassword}
               onChange={(e) => handleChange('repeatPassword', e.target.value)}
