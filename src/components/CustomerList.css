@@ -44,8 +44,20 @@ table {
   font-size: 14px;
 }
 
+.list-banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.list-banner-error {
+  background: var(--status-lost-bg);
+  color: var(--status-lost-text);
+}
+
 thead th {
-  text-align: left;
+  text-align: right;
   padding: 12px 14px;
   font-size: 12px;
   text-transform: uppercase;
@@ -120,9 +132,14 @@ tbody tr:hover {
   font-weight: 600;
 }
 
+.btn-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .overdue-tag {
   display: inline-block;
-  margin-left: 8px;
+  margin-right: 8px;
   padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;

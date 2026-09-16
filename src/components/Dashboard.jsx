@@ -1,23 +1,23 @@
 import './Dashboard.css'
 
 function isFollowUpDue(customer) {
-  if (!customer.nextFollowUp) return false
-  if (customer.status === 'Won' || customer.status === 'Lost') return false
+  if (!customer.next_follow_up) return false
+  if (customer.status === 'won' || customer.status === 'lost') return false
   const today = new Date().toISOString().slice(0, 10)
-  return customer.nextFollowUp <= today
+  return customer.next_follow_up <= today
 }
 
 export default function Dashboard({ customers }) {
   const total = customers.length
   const needsFollowUp = customers.filter(isFollowUpDue).length
-  const won = customers.filter((c) => c.status === 'Won').length
-  const lost = customers.filter((c) => c.status === 'Lost').length
+  const won = customers.filter((c) => c.status === 'won').length
+  const lost = customers.filter((c) => c.status === 'lost').length
 
   const cards = [
-    { label: 'Total Customers', value: total, tone: 'neutral' },
-    { label: 'Needs Follow-up', value: needsFollowUp, tone: 'warning' },
-    { label: 'Won', value: won, tone: 'success' },
-    { label: 'Lost', value: lost, tone: 'danger' },
+    { label: 'کل مشتریان', value: total, tone: 'neutral' },
+    { label: 'نیازمند پیگیری', value: needsFollowUp, tone: 'warning' },
+    { label: 'فروش موفق', value: won, tone: 'success' },
+    { label: 'از دست رفته', value: lost, tone: 'danger' },
   ]
 
   return (

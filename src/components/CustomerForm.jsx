@@ -1,61 +1,83 @@
 import { useState } from 'react'
-import { STATUS_OPTIONS } from '../data/seedCustomers'
+import { STATUS_OPTIONS, STATUS_LABELS } from '../data/statusOptions'
 import './CustomerForm.css'
 
 const EMPTY_FORM = {
-  company: '',
-  contact: '',
+  company_name: '',
+  contact_person: '',
   phone: '',
   city: '',
-  product: '',
-  status: 'New',
-  nextFollowUp: '',
+  interested_product: '',
+  status: 'new',
+  next_follow_up: '',
   notes: '',
 }
 
 export default function CustomerForm({ initialCustomer, onSave, onCancel }) {
   const [form, setForm] = useState(initialCustomer ?? EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const isEditing = Boolean(initialCustomer)
 
   function handleChange(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }))
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.company.trim() || !form.contact.trim()) return
-    onSave(form)
+    if (!form.company_name.trim() || !form.contact_person.trim()) return
+    setError('')
+    setSaving(true)
+    try {
+      const payload = {
+        company_name: form.company_name,
+        contact_person: form.contact_person,
+        phone: form.phone,
+        city: form.city,
+        interested_product: form.interested_product,
+        status: form.status,
+        next_follow_up: form.next_follow_up || null,
+        notes: form.notes,
+      }
+      await onSave(payload)
+    } catch (err) {
+      setError(err.message || 'خطایی رخ داد. لطفاً دوباره تلاش کنید.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <div className="form-overlay" onClick={onCancel}>
       <div className="form-panel" onClick={(e) => e.stopPropagation()}>
-        <h2>{isEditing ? 'Edit Customer' : 'Add Customer'}</h2>
+        <h2>{isEditing ? 'ویرایش مشتری' : 'افزودن مشتری'}</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-row">
             <label>
-              Company Name *
+              نام شرکت *
               <input
                 type="text"
                 required
-                value={form.company}
-                onChange={(e) => handleChange('company', e.target.value)}
+                value={form.company_name}
+                onChange={(e) => handleChange('company_name', e.target.value)}
               />
             </label>
             <label>
-              Contact Person *
+              شخص رابط *
               <input
                 type="text"
                 required
-                value={form.contact}
-                onChange={(e) => handleChange('contact', e.target.value)}
+                value={form.contact_person}
+                onChange={(e) =>
+                  handleChange('contact_person', e.target.value)
+                }
               />
             </label>
           </div>
 
           <div className="form-row">
             <label>
-              Phone
+              شماره تماس
               <input
                 type="text"
                 value={form.phone}
@@ -63,7 +85,7 @@ export default function CustomerForm({ initialCustomer, onSave, onCancel }) {
               />
             </label>
             <label>
-              City
+              شهر
               <input
                 type="text"
                 value={form.city}
@@ -74,22 +96,24 @@ export default function CustomerForm({ initialCustomer, onSave, onCancel }) {
 
           <div className="form-row">
             <label>
-              Interested Product
+              محصول موردنیاز
               <input
                 type="text"
-                value={form.product}
-                onChange={(e) => handleChange('product', e.target.value)}
+                value={form.interested_product}
+                onChange={(e) =>
+                  handleChange('interested_product', e.target.value)
+                }
               />
             </label>
             <label>
-              Status
+              وضعیت
               <select
                 value={form.status}
                 onChange={(e) => handleChange('status', e.target.value)}
               >
                 {STATUS_OPTIONS.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {STATUS_LABELS[status]}
                   </option>
                 ))}
               </select>
@@ -98,30 +122,43 @@ export default function CustomerForm({ initialCustomer, onSave, onCancel }) {
 
           <div className="form-row">
             <label>
-              Next Follow-up Date
+              تاریخ پیگیری بعدی
               <input
                 type="date"
-                value={form.nextFollowUp}
-                onChange={(e) => handleChange('nextFollowUp', e.target.value)}
+                value={form.next_follow_up || ''}
+                onChange={(e) =>
+                  handleChange('next_follow_up', e.target.value)
+                }
               />
             </label>
           </div>
 
           <label className="form-notes">
-            Notes
+            یادداشت
             <textarea
               rows={3}
-              value={form.notes}
+              value={form.notes || ''}
               onChange={(e) => handleChange('notes', e.target.value)}
             />
           </label>
 
+          {error && <div className="form-error">{error}</div>}
+
           <div className="form-actions">
-            <button type="button" className="btn-secondary" onClick={onCancel}>
-              Cancel
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onCancel}
+              disabled={saving}
+            >
+              انصراف
             </button>
-            <button type="submit" className="btn-primary">
-              {isEditing ? 'Save Changes' : 'Add Customer'}
+            <button type="submit" className="btn-primary" disabled={saving}>
+              {saving
+                ? 'در حال ذخیره...'
+                : isEditing
+                  ? 'ذخیره تغییرات'
+                  : 'افزودن مشتری'}
             </button>
           </div>
         </form>

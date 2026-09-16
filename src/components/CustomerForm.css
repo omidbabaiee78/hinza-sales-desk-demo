@@ -81,8 +81,22 @@
   font-family: inherit;
 }
 
+.form-error {
+  background: var(--status-lost-bg);
+  color: var(--status-lost-text);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  margin-bottom: 14px;
+}
+
 .form-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.form-panel button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
