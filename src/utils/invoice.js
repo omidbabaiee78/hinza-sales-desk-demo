@@ -16,6 +16,15 @@ export function invoiceStatusLabel(status) {
   return INVOICE_STATUS_LABELS[status] || status
 }
 
+// An invoice still needs attention (payment or follow-up) unless it is
+// fully paid or cancelled. Shared so "open invoices" means the same thing
+// everywhere it is counted.
+export const SETTLED_INVOICE_STATUSES = ['paid', 'cancelled']
+
+export function isInvoiceOpen(status) {
+  return !SETTLED_INVOICE_STATUSES.includes(status)
+}
+
 // Single source of truth for the paid/remaining formulas so both the admin
 // and customer invoice views derive the same numbers from the same real
 // payment rows, never a frontend-invented total.

@@ -37,6 +37,10 @@ tbody tr:hover {
   background: var(--surface-hover);
 }
 
+.clickable-row {
+  cursor: pointer;
+}
+
 .cell-notes {
   max-width: 220px;
   overflow: hidden;

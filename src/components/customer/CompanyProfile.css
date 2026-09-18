@@ -21,3 +21,9 @@
   margin: 0 0 14px;
   font-size: 15px;
 }
+
+.profile-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}

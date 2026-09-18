@@ -8,6 +8,8 @@ import AdminOrderDetail from './AdminOrderDetail'
 import ProductsPage from './ProductsPage'
 import AdminInvoicesPage from './AdminInvoicesPage'
 import AdminInvoiceDetail from './AdminInvoiceDetail'
+import AdminCustomersPage from './AdminCustomersPage'
+import AdminCustomerDetail from './AdminCustomerDetail'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
@@ -21,7 +23,6 @@ const NAV_ITEMS = [
 ]
 
 const PLACEHOLDER_TITLES = {
-  customers: 'مشتریان',
   payments: 'پرداخت‌ها',
   followUps: 'پیگیری‌ها',
 }
@@ -30,17 +31,27 @@ export default function AdminApp({ profile, onSignOut }) {
   const [activeKey, setActiveKey] = useState('dashboard')
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null)
 
   function navigate(key) {
     setActiveKey(key)
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
+    setSelectedCustomerId(null)
   }
 
   function openInvoice(invoiceId) {
     setActiveKey('invoices')
     setSelectedOrderId(null)
+    setSelectedCustomerId(null)
     setSelectedInvoiceId(invoiceId)
+  }
+
+  function openOrder(orderId) {
+    setActiveKey('orders')
+    setSelectedInvoiceId(null)
+    setSelectedCustomerId(null)
+    setSelectedOrderId(orderId)
   }
 
   return (
@@ -74,6 +85,17 @@ export default function AdminApp({ profile, onSignOut }) {
           />
         ) : (
           <AdminInvoicesPage onOpenInvoice={setSelectedInvoiceId} />
+        ))}
+      {activeKey === 'customers' &&
+        (selectedCustomerId ? (
+          <AdminCustomerDetail
+            companyId={selectedCustomerId}
+            onBack={() => setSelectedCustomerId(null)}
+            onOpenOrder={openOrder}
+            onOpenInvoice={openInvoice}
+          />
+        ) : (
+          <AdminCustomersPage onOpenCustomer={setSelectedCustomerId} />
         ))}
       {PLACEHOLDER_TITLES[activeKey] && (
         <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />

@@ -78,7 +78,7 @@ export default function CustomerApp({ profile, company, onSignOut }) {
         <AccountPage company={company} onOpenInvoice={openInvoice} />
       )}
       {activeKey === 'profile' && (
-        <CompanyProfile profile={profile} company={company} />
+        <CompanyProfile profile={profile} company={company} onNavigate={navigate} />
       )}
     </AppShell>
   )
