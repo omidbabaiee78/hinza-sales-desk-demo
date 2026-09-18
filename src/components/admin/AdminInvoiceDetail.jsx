@@ -2,13 +2,11 @@ import { useState } from 'react'
 import { useInvoice } from '../../hooks/useInvoice'
 import { useInvoicePayments } from '../../hooks/useInvoicePayments'
 import { useCompanyBalance } from '../../hooks/useCompanyBalance'
-import { formatJalaliDate, formatRial } from '../../utils/formatters'
+import { formatRial } from '../../utils/formatters'
 import { calcInvoicePaid, calcInvoiceRemaining } from '../../utils/invoice'
 import { describeBalance } from '../../utils/balance'
 import InvoiceStatusBadge from '../invoices/InvoiceStatusBadge'
-import InvoiceItemsTable from '../invoices/InvoiceItemsTable'
-import InvoiceSummaryAmounts from '../invoices/InvoiceSummaryAmounts'
-import PaymentsList from '../invoices/PaymentsList'
+import InvoiceDocument from '../invoices/InvoiceDocument'
 import PaymentForm from '../invoices/PaymentForm'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
@@ -40,7 +38,7 @@ export default function AdminInvoiceDetail({ invoiceId, onBack }) {
 
   return (
     <div className="order-detail">
-      <div className="page-toolbar">
+      <div className="page-toolbar no-print">
         <button type="button" className="btn-secondary" onClick={onBack}>
           بازگشت
         </button>
@@ -50,68 +48,50 @@ export default function AdminInvoiceDetail({ invoiceId, onBack }) {
         </h2>
       </div>
 
-      {successMessage && <div className="success-banner">{successMessage}</div>}
+      {successMessage && <div className="success-banner no-print">{successMessage}</div>}
 
-      <div className="order-detail-grid">
+      {paymentsLoading ? (
+        <p className="no-print">در حال بارگذاری فاکتور...</p>
+      ) : (
+        <InvoiceDocument
+          invoice={invoice}
+          company={company}
+          payments={payments}
+          paidRial={paidRial}
+          remainingRial={remainingRial}
+        />
+      )}
+
+      <div className="order-detail-grid no-print" style={{ marginTop: 20 }}>
         <section className="order-detail-card">
-          <h3>اطلاعات فاکتور</h3>
-          <div className="info-row">
-            <span className="info-label">شرکت</span>
-            <span className="info-value">{company?.name || '—'}</span>
-          </div>
-          <div className="info-row">
-            <span className="info-label">تاریخ صدور</span>
-            <span className="info-value">{formatJalaliDate(invoice.issued_at)}</span>
-          </div>
-          <div className="info-row">
-            <span className="info-label">تاریخ سررسید</span>
-            <span className="info-value">{formatJalaliDate(invoice.due_date)}</span>
-          </div>
-          {invoice.note && (
+          <h3>مانده حساب شرکت</h3>
+          {balanceInfo ? (
             <div className="info-row">
-              <span className="info-label">توضیح</span>
-              <span className="info-value">{invoice.note}</span>
-            </div>
-          )}
-          {balanceInfo && (
-            <div className="info-row">
-              <span className="info-label">مانده حساب شرکت</span>
+              <span className="info-label">مانده فعلی</span>
               <span className="info-value">
                 {balance === 0 ? 'تسویه' : `${balanceInfo.label} ${formatRial(balanceInfo.amount)}`}
               </span>
             </div>
+          ) : (
+            <p className="profile-empty">در حال محاسبه...</p>
+          )}
+        </section>
+
+        <section className="order-detail-card">
+          <h3>ثبت پرداخت</h3>
+          {!showPaymentForm ? (
+            <button type="button" className="btn-primary" onClick={() => setShowPaymentForm(true)}>
+              ثبت پرداخت
+            </button>
+          ) : (
+            <PaymentForm
+              onSubmit={handleRegisterPayment}
+              onCancel={() => setShowPaymentForm(false)}
+              submitting={submitting}
+            />
           )}
         </section>
       </div>
-
-      <h3>اقلام فاکتور</h3>
-      <InvoiceItemsTable items={invoice.invoice_items || []} />
-
-      <InvoiceSummaryAmounts
-        totalRial={invoice.total_rial}
-        paidRial={paidRial}
-        remainingRial={remainingRial}
-      />
-
-      <h3>پرداخت‌ها</h3>
-      {paymentsLoading ? <p>در حال بارگذاری...</p> : <PaymentsList payments={payments} />}
-
-      {!showPaymentForm ? (
-        <button
-          type="button"
-          className="btn-primary"
-          style={{ marginTop: 12 }}
-          onClick={() => setShowPaymentForm(true)}
-        >
-          ثبت پرداخت
-        </button>
-      ) : (
-        <PaymentForm
-          onSubmit={handleRegisterPayment}
-          onCancel={() => setShowPaymentForm(false)}
-          submitting={submitting}
-        />
-      )}
     </div>
   )
 }

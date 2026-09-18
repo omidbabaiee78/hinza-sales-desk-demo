@@ -52,6 +52,13 @@ export function formatRialPerKg(amount) {
   return `${rialFormatter.format(value)} ریال / کیلوگرم`
 }
 
+export function formatQuantity(amount) {
+  if (amount === null || amount === undefined) return '—'
+  const value = Number(amount)
+  if (Number.isNaN(value)) return '—'
+  return rialFormatter.format(value)
+}
+
 export function formatKg(amount) {
   if (amount === null || amount === undefined) return '—'
   const value = Number(amount)

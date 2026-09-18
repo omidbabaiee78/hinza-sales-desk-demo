@@ -94,7 +94,7 @@ export default function AccountPage({ company, onOpenInvoice }) {
                       className="btn-link"
                       onClick={() => onOpenInvoice(invoice.id)}
                     >
-                      مشاهده
+                      مشاهده فاکتور
                     </button>
                   </td>
                 </tr>
