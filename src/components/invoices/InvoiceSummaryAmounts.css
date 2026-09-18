@@ -1,0 +1,30 @@
+.invoice-summary-amounts {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin: 14px 0;
+}
+
+.invoice-amount-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.invoice-amount-row:last-child {
+  border-bottom: none;
+}
+
+.invoice-amount-row strong {
+  color: var(--text-h);
+  font-size: 15px;
+}
+
+.invoice-amount-remaining strong {
+  font-size: 18px;
+  color: var(--accent);
+}

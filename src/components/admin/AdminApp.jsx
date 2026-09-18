@@ -6,6 +6,8 @@ import RegistrationRequestsPage from './RegistrationRequestsPage'
 import AdminOrdersPage from './AdminOrdersPage'
 import AdminOrderDetail from './AdminOrderDetail'
 import ProductsPage from './ProductsPage'
+import AdminInvoicesPage from './AdminInvoicesPage'
+import AdminInvoiceDetail from './AdminInvoiceDetail'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
@@ -20,7 +22,6 @@ const NAV_ITEMS = [
 
 const PLACEHOLDER_TITLES = {
   customers: 'مشتریان',
-  invoices: 'فاکتورها',
   payments: 'پرداخت‌ها',
   followUps: 'پیگیری‌ها',
 }
@@ -28,10 +29,18 @@ const PLACEHOLDER_TITLES = {
 export default function AdminApp({ profile, onSignOut }) {
   const [activeKey, setActiveKey] = useState('dashboard')
   const [selectedOrderId, setSelectedOrderId] = useState(null)
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
 
   function navigate(key) {
     setActiveKey(key)
     setSelectedOrderId(null)
+    setSelectedInvoiceId(null)
+  }
+
+  function openInvoice(invoiceId) {
+    setActiveKey('invoices')
+    setSelectedOrderId(null)
+    setSelectedInvoiceId(invoiceId)
   }
 
   return (
@@ -51,11 +60,21 @@ export default function AdminApp({ profile, onSignOut }) {
           <AdminOrderDetail
             orderId={selectedOrderId}
             onBack={() => setSelectedOrderId(null)}
+            onOpenInvoice={openInvoice}
           />
         ) : (
           <AdminOrdersPage onOpenOrder={setSelectedOrderId} />
         ))}
       {activeKey === 'products' && <ProductsPage />}
+      {activeKey === 'invoices' &&
+        (selectedInvoiceId ? (
+          <AdminInvoiceDetail
+            invoiceId={selectedInvoiceId}
+            onBack={() => setSelectedInvoiceId(null)}
+          />
+        ) : (
+          <AdminInvoicesPage onOpenInvoice={setSelectedInvoiceId} />
+        ))}
       {PLACEHOLDER_TITLES[activeKey] && (
         <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />
       )}

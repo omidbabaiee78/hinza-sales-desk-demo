@@ -1,10 +1,14 @@
 import { useCustomerDashboardData } from '../../hooks/useCustomerDashboardData'
+import { useCompanyBalance } from '../../hooks/useCompanyBalance'
+import { formatRial } from '../../utils/formatters'
+import { describeBalance } from '../../utils/balance'
 import ErrorBanner from '../common/ErrorBanner'
 import '../common/DashboardCards.css'
 
 export default function CustomerDashboard({ company, onNavigate }) {
   const { activeOrders, previousOrders, unpaidInvoices, specialDiscounts, loading, error } =
     useCustomerDashboardData(company?.id)
+  const { balance, loading: balanceLoading } = useCompanyBalance(company?.id)
 
   if (!company) {
     return (
@@ -15,10 +19,21 @@ export default function CustomerDashboard({ company, onNavigate }) {
     )
   }
 
+  let balanceValue = '—'
+  if (!balanceLoading && balance !== null) {
+    if (balance === 0) {
+      balanceValue = 'تسویه'
+    } else {
+      const info = describeBalance(balance)
+      balanceValue = balance < 0 ? `${info.label}: ${formatRial(info.amount)}` : formatRial(info.amount)
+    }
+  }
+
   const cards = [
+    { key: 'account', label: 'مانده حساب', value: balanceValue, isBalance: true },
     { key: 'orders', label: 'سفارش‌های جاری', value: activeOrders },
     { key: 'orders', label: 'سفارش‌های قبلی', value: previousOrders },
-    { key: 'invoices', label: 'فاکتورهای پرداخت‌نشده', value: unpaidInvoices },
+    { key: 'invoices', label: 'فاکتورهای باز', value: unpaidInvoices },
     { key: 'account', label: 'تخفیف‌های ویژه', value: specialDiscounts },
   ]
 
@@ -34,7 +49,7 @@ export default function CustomerDashboard({ company, onNavigate }) {
             onClick={() => onNavigate(card.key)}
           >
             <span className="dashboard-card-value">
-              {loading ? '—' : card.value}
+              {!card.isBalance && loading ? '—' : card.value}
             </span>
             <span className="dashboard-card-label">{card.label}</span>
           </button>

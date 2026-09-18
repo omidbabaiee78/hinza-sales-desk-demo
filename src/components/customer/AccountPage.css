@@ -1,0 +1,37 @@
+.balance-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.balance-title {
+  display: block;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.balance-value {
+  display: block;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.balance-sublabel {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.balance-value.tone-warning {
+  color: var(--status-offer-text, #c2410c);
+}
+
+.balance-value.tone-success {
+  color: var(--status-won-text, #15803d);
+}

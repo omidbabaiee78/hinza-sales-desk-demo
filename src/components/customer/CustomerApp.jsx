@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import AppShell from '../layout/AppShell'
-import PlaceholderSection from '../common/PlaceholderSection'
 import CustomerDashboard from './CustomerDashboard'
 import CompanyProfile from './CompanyProfile'
 import NewOrderPage from './NewOrderPage'
 import CustomerOrdersPage from './CustomerOrdersPage'
 import CustomerOrderDetail from './CustomerOrderDetail'
+import CustomerInvoicesPage from './CustomerInvoicesPage'
+import CustomerInvoiceDetail from './CustomerInvoiceDetail'
+import AccountPage from './AccountPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد من' },
@@ -16,18 +18,21 @@ const NAV_ITEMS = [
   { key: 'profile', label: 'پروفایل شرکت' },
 ]
 
-const PLACEHOLDER_TITLES = {
-  invoices: 'فاکتورها',
-  account: 'حساب و پرداخت‌ها',
-}
-
 export default function CustomerApp({ profile, company, onSignOut }) {
   const [activeKey, setActiveKey] = useState('dashboard')
   const [selectedOrderId, setSelectedOrderId] = useState(null)
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
 
   function navigate(key) {
     setActiveKey(key)
     setSelectedOrderId(null)
+    setSelectedInvoiceId(null)
+  }
+
+  function openInvoice(invoiceId) {
+    setActiveKey('invoices')
+    setSelectedOrderId(null)
+    setSelectedInvoiceId(invoiceId)
   }
 
   return (
@@ -60,11 +65,20 @@ export default function CustomerApp({ profile, company, onSignOut }) {
         ) : (
           <CustomerOrdersPage company={company} onOpenOrder={setSelectedOrderId} />
         ))}
+      {activeKey === 'invoices' &&
+        (selectedInvoiceId ? (
+          <CustomerInvoiceDetail
+            invoiceId={selectedInvoiceId}
+            onBack={() => setSelectedInvoiceId(null)}
+          />
+        ) : (
+          <CustomerInvoicesPage company={company} onOpenInvoice={setSelectedInvoiceId} />
+        ))}
+      {activeKey === 'account' && (
+        <AccountPage company={company} onOpenInvoice={openInvoice} />
+      )}
       {activeKey === 'profile' && (
         <CompanyProfile profile={profile} company={company} />
-      )}
-      {PLACEHOLDER_TITLES[activeKey] && (
-        <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />
       )}
     </AppShell>
   )

@@ -1,0 +1,35 @@
+.payment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  margin-top: 10px;
+  max-width: 420px;
+}
+
+.payment-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.payment-form input,
+.payment-form textarea {
+  font: inherit;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.payment-form textarea {
+  resize: vertical;
+  font-family: inherit;
+}

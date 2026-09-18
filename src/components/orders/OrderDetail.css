@@ -40,6 +40,40 @@
   gap: 10px;
 }
 
+.invoice-action-block {
+  margin-top: 20px;
+}
+
+.invoice-issue-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 360px;
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.invoice-issue-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.invoice-issue-form input {
+  font: inherit;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
 .details-toggle {
   display: block;
   margin: 16px 0 4px;

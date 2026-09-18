@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useOrder } from '../../hooks/useOrder'
 import { useOrderEvents } from '../../hooks/useOrderEvents'
 import { useOrderActions } from '../../hooks/useOrderActions'
+import { useOrderInvoice } from '../../hooks/useOrderInvoice'
+import { useIssueInvoice } from '../../hooks/useIssueInvoice'
 import { formatJalaliDate } from '../../utils/formatters'
 import { getAllowedTransitions } from '../../utils/orderStatus'
 import StatusBadge from '../orders/StatusBadge'
@@ -9,7 +11,10 @@ import OrderItemsTable from '../orders/OrderItemsTable'
 import OrderTimeline from '../orders/OrderTimeline'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
+import JalaliDateInput from '../common/JalaliDateInput'
 import '../orders/OrderDetail.css'
+
+const INVOICE_ELIGIBLE_STATUSES = ['admin_approved', 'delivered']
 
 const PRIMARY_ACTION_BY_STATUS = {
   customer_approved: { label: 'تأیید سفارش', next: 'admin_approved' },
@@ -26,11 +31,14 @@ const HELPER_TEXT_BY_STATUS = {
   cancelled: 'این سفارش لغو شده است.',
 }
 
-export default function AdminOrderDetail({ orderId, onBack }) {
+export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
   const { order, company, creator, loading, error, refresh } = useOrder(orderId)
   const { events, refresh: refreshEvents } = useOrderEvents(orderId)
   const { busy, transitionStatus, saveAdminNote, saveItemPricing } =
     useOrderActions(orderId)
+  const { invoice: existingInvoice, loading: invoiceLoading, refresh: refreshOrderInvoice } =
+    useOrderInvoice(orderId)
+  const { issueInvoice, submitting: issuingInvoice } = useIssueInvoice()
 
   const [actionError, setActionError] = useState('')
   const [statusSuccess, setStatusSuccess] = useState('')
@@ -40,6 +48,11 @@ export default function AdminOrderDetail({ orderId, onBack }) {
   const [noteError, setNoteError] = useState('')
   const [noteSaving, setNoteSaving] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showInvoiceForm, setShowInvoiceForm] = useState(false)
+  const [dueDate, setDueDate] = useState('')
+  const [invoiceNote, setInvoiceNote] = useState('')
+  const [invoiceError, setInvoiceError] = useState('')
+  const [invoiceSuccess, setInvoiceSuccess] = useState('')
 
   if (loading) return <LoadingScreen text="در حال بارگذاری سفارش..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
@@ -50,6 +63,7 @@ export default function AdminOrderDetail({ orderId, onBack }) {
   const allowed = getAllowedTransitions(order.status, 'admin')
   const canReject = allowed.includes('rejected')
   const primaryAction = PRIMARY_ACTION_BY_STATUS[order.status] || null
+  const eligibleForInvoice = INVOICE_ELIGIBLE_STATUSES.includes(order.status)
 
   async function handleTransition(newStatus) {
     setActionError('')
@@ -98,6 +112,22 @@ export default function AdminOrderDetail({ orderId, onBack }) {
       setNoteError(err.message || 'ذخیره یادداشت با خطا مواجه شد.')
     } finally {
       setNoteSaving(false)
+    }
+  }
+
+  async function handleIssueInvoice() {
+    setInvoiceError('')
+    setInvoiceSuccess('')
+    try {
+      const { invoiceId } = await issueInvoice({ orderId, dueDate, note: invoiceNote })
+      refreshOrderInvoice()
+      setShowInvoiceForm(false)
+      setInvoiceSuccess('فاکتور با موفقیت صادر شد.')
+      if (invoiceId) {
+        setTimeout(() => onOpenInvoice(invoiceId), 700)
+      }
+    } catch (err) {
+      setInvoiceError(err.message || 'صدور فاکتور با خطا مواجه شد.')
     }
   }
 
@@ -210,6 +240,56 @@ export default function AdminOrderDetail({ orderId, onBack }) {
         onAnnouncePrice={handleAnnouncePrice}
         saving={announcing}
       />
+
+      {eligibleForInvoice && !invoiceLoading && (
+        <div className="invoice-action-block">
+          {invoiceSuccess && <div className="success-banner">{invoiceSuccess}</div>}
+          {existingInvoice ? (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => onOpenInvoice(existingInvoice.id)}
+            >
+              مشاهده فاکتور
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowInvoiceForm((v) => !v)}
+              >
+                صدور فاکتور
+              </button>
+              {showInvoiceForm && (
+                <div className="invoice-issue-form">
+                  <label>
+                    تاریخ سررسید (اختیاری)
+                    <JalaliDateInput value={dueDate} onChange={setDueDate} />
+                  </label>
+                  <label>
+                    توضیح (اختیاری)
+                    <input
+                      type="text"
+                      value={invoiceNote}
+                      onChange={(e) => setInvoiceNote(e.target.value)}
+                    />
+                  </label>
+                  <ErrorBanner message={invoiceError} />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={handleIssueInvoice}
+                    disabled={issuingInvoice}
+                  >
+                    {issuingInvoice ? 'در حال صدور...' : 'صدور فاکتور'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <button
         type="button"
