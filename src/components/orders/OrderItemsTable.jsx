@@ -1,25 +1,43 @@
 import { useState } from 'react'
 import { formatRial, formatRialPerKg, formatKg } from '../../utils/formatters'
+import { resolveSuggestedDiscountPercent } from '../../utils/pricing'
 import '../common/DataTable.css'
 import './OrderItemsTable.css'
 
-function buildDraft(items) {
+function findSuggestion(suggestions, item) {
+  if (!suggestions) return null
+  return (
+    suggestions.find((s) => s.order_item_id && s.order_item_id === item.id) ||
+    suggestions.find((s) => s.product_id && s.product_id === item.product_id) ||
+    null
+  )
+}
+
+function buildDraft(items, suggestions) {
   const draft = {}
   for (const item of items) {
+    const hasManualPrice = item.unit_price_rial !== null && item.unit_price_rial !== undefined
     draft[item.id] = {
-      unit_price_rial: item.unit_price_rial ?? '',
-      discount_percent: item.discount_percent ?? '',
+      unit_price_rial: hasManualPrice ? item.unit_price_rial : '',
+      discount_percent: hasManualPrice
+        ? (item.discount_percent ?? 0)
+        : resolveSuggestedDiscountPercent(findSuggestion(suggestions, item)),
     }
   }
   return draft
+}
+
+function calcFinalUnitPrice(unitPrice, discountPercent) {
+  const price = Number(unitPrice) || 0
+  const discount = Number(discountPercent) || 0
+  return Math.round(price * (1 - discount / 100))
 }
 
 function calcLineTotal(quantityKg, unitPrice, discountPercent) {
   const qty = Number(quantityKg) || 0
   const price = Number(unitPrice) || 0
   const discount = Number(discountPercent) || 0
-  const gross = qty * price
-  return Math.round(gross * (1 - discount / 100))
+  return Math.round(qty * price * (1 - discount / 100))
 }
 
 export default function OrderItemsTable({
@@ -28,8 +46,9 @@ export default function OrderItemsTable({
   totalRial,
   onAnnouncePrice,
   saving,
+  pricingSuggestions,
 }) {
-  const [draft, setDraft] = useState(() => buildDraft(items))
+  const [draft, setDraft] = useState(() => buildDraft(items, pricingSuggestions))
   const [validationError, setValidationError] = useState('')
 
   if (!items || items.length === 0) {
@@ -49,7 +68,7 @@ export default function OrderItemsTable({
       return price === '' || price === undefined || Number(price) <= 0
     })
     if (invalid) {
-      setValidationError('لطفاً قیمت هر کیلو را برای همهٔ اقلام وارد کنید.')
+      setValidationError('لطفاً قیمت روز هر کیلو را برای همهٔ اقلام وارد کنید.')
       return
     }
     setValidationError('')
@@ -67,9 +86,7 @@ export default function OrderItemsTable({
   const previewTotal = editable
     ? items.reduce((sum, item) => {
         const row = draft[item.id] || {}
-        return (
-          sum + calcLineTotal(item.quantity_kg, row.unit_price_rial, row.discount_percent)
-        )
+        return sum + calcLineTotal(item.quantity_kg, row.unit_price_rial, row.discount_percent)
       }, 0)
     : null
 
@@ -81,17 +98,25 @@ export default function OrderItemsTable({
             <tr>
               <th>محصول</th>
               <th>مقدار</th>
-              <th>قیمت هر کیلو{editable ? ' (ریال)' : ''}</th>
-              <th>تخفیف (%)</th>
-              <th>مبلغ</th>
+              <th>قیمت روز هر کیلو</th>
+              <th>تخفیف پیشنهادی (%)</th>
+              <th>قیمت نهایی هر کیلو</th>
+              <th>مبلغ نهایی</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item) => {
               const row = draft[item.id] || {}
+              const unitPrice = editable ? row.unit_price_rial : item.unit_price_rial
+              const discount = editable ? row.discount_percent : item.discount_percent
+              const finalUnitPrice =
+                unitPrice !== '' && unitPrice != null
+                  ? calcFinalUnitPrice(unitPrice, discount)
+                  : null
               const lineTotal = editable
                 ? calcLineTotal(item.quantity_kg, row.unit_price_rial, row.discount_percent)
                 : item.line_total_rial
+
               return (
                 <tr key={item.id}>
                   <td>
@@ -130,11 +155,10 @@ export default function OrderItemsTable({
                           ? formatRialPerKg(item.unit_price_rial)
                           : '—'}
                       </td>
-                      <td>
-                        {item.discount_percent ? `٪${item.discount_percent}` : '—'}
-                      </td>
+                      <td>{item.discount_percent ? `٪${item.discount_percent}` : '—'}</td>
                     </>
                   )}
+                  <td>{finalUnitPrice != null ? formatRialPerKg(finalUnitPrice) : '—'}</td>
                   <td>{lineTotal != null ? formatRial(lineTotal) : '—'}</td>
                 </tr>
               )

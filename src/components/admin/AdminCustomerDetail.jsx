@@ -3,12 +3,17 @@ import { useCompanyBalance } from '../../hooks/useCompanyBalance'
 import { useCustomerOrders } from '../../hooks/useCustomerOrders'
 import { useCustomerInvoices } from '../../hooks/useCustomerInvoices'
 import { useCompanyPayments } from '../../hooks/useCompanyPayments'
+import { useActiveProducts } from '../../hooks/useActiveProducts'
+import { usePricingSuggestion } from '../../hooks/usePricingSuggestion'
+import { usePricingSettings } from '../../hooks/usePricingSettings'
 import { formatJalaliDate, formatKg, formatRial } from '../../utils/formatters'
 import { formatBalanceLine } from '../../utils/balance'
 import { isInvoiceOpen } from '../../utils/invoice'
+import { invoicesUntilNextTier } from '../../utils/pricing'
 import StatusBadge from '../orders/StatusBadge'
 import InvoiceStatusBadge from '../invoices/InvoiceStatusBadge'
 import PaymentsList from '../invoices/PaymentsList'
+import CompanySpecialPrices from './CompanySpecialPrices'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
 import '../orders/OrderDetail.css'
@@ -21,6 +26,12 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
   const { orders, loading: ordersLoading } = useCustomerOrders(companyId)
   const { invoices, loading: invoicesLoading } = useCustomerInvoices(companyId)
   const { payments, loading: paymentsLoading } = useCompanyPayments(companyId)
+  const { products: activeProducts } = useActiveProducts()
+  const { suggestion: loyaltyInfo, loading: loyaltyLoading } = usePricingSuggestion(
+    companyId,
+    activeProducts[0]?.id || null,
+  )
+  const { settings: pricingSettings } = usePricingSettings()
 
   if (loading) return <LoadingScreen text="در حال بارگذاری مشتری..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
@@ -29,6 +40,17 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
   const purchaseHistory = orders.filter((order) => order.status === 'delivered')
   const openInvoicesCount = invoices.filter((invoice) => isInvoiceOpen(invoice.status)).length
   const lastPurchaseAt = purchaseHistory[0]?.created_at || null
+
+  const isLoyal = loyaltyInfo ? Number(loyaltyInfo.auto_discount_percent) > 0 : false
+  const nextTierIn =
+    loyaltyInfo && pricingSettings && !isLoyal
+      ? invoicesUntilNextTier({
+          paidInvoiceCount: loyaltyInfo.paid_invoice_count,
+          everyPaidInvoices: pricingSettings.loyalty_every_paid_invoices,
+          autoDiscountPercent: loyaltyInfo.auto_discount_percent,
+          maxAutoDiscountPercent: pricingSettings.max_auto_discount_percent,
+        })
+      : null
 
   const metrics = [
     {
@@ -112,6 +134,46 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
           </div>
         ))}
       </div>
+
+      <div className="order-detail-grid">
+        <section className="order-detail-card">
+          <h3>وفاداری</h3>
+          {loyaltyLoading || !loyaltyInfo ? (
+            <p className="profile-empty">در حال محاسبه...</p>
+          ) : (
+            <>
+              <div className="info-row">
+                <span className="info-label">خریدهای تسویه‌شده</span>
+                <span className="info-value">{loyaltyInfo.paid_invoice_count}</span>
+              </div>
+              {isLoyal ? (
+                <>
+                  <div className="info-row">
+                    <span className="info-label">وضعیت</span>
+                    <span className="info-value">مشتری وفادار</span>
+                  </div>
+                  <div className="info-row">
+                    <span className="info-label">تخفیف پیشنهادی</span>
+                    <span className="info-value">٪{loyaltyInfo.auto_discount_percent}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="info-row">
+                    <span className="info-label">تخفیف وفاداری</span>
+                    <span className="info-value">هنوز فعال نشده</span>
+                  </div>
+                  {nextTierIn != null && (
+                    <p className="profile-empty">{nextTierIn} خرید تا تخفیف</p>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </section>
+      </div>
+
+      <CompanySpecialPrices companyId={companyId} />
 
       <h3>سابقه خرید</h3>
       <div className="table-wrapper">

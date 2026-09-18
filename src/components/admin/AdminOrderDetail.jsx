@@ -4,6 +4,7 @@ import { useOrderEvents } from '../../hooks/useOrderEvents'
 import { useOrderActions } from '../../hooks/useOrderActions'
 import { useOrderInvoice } from '../../hooks/useOrderInvoice'
 import { useIssueInvoice } from '../../hooks/useIssueInvoice'
+import { useOrderPricingSuggestions } from '../../hooks/useOrderPricingSuggestions'
 import { formatJalaliDate } from '../../utils/formatters'
 import { getAllowedTransitions } from '../../utils/orderStatus'
 import StatusBadge from '../orders/StatusBadge'
@@ -39,6 +40,8 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
   const { invoice: existingInvoice, loading: invoiceLoading, refresh: refreshOrderInvoice } =
     useOrderInvoice(orderId)
   const { issueInvoice, submitting: issuingInvoice } = useIssueInvoice()
+  const { suggestions: pricingSuggestions, loading: pricingSuggestionsLoading } =
+    useOrderPricingSuggestions(order?.status === 'pending_review' ? orderId : null)
 
   const [actionError, setActionError] = useState('')
   const [statusSuccess, setStatusSuccess] = useState('')
@@ -131,9 +134,10 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
     }
   }
 
-  const itemsKey = items
-    .map((item) => `${item.id}-${item.unit_price_rial}-${item.discount_percent}`)
-    .join(',')
+  const itemsKey =
+    items
+      .map((item) => `${item.id}-${item.unit_price_rial}-${item.discount_percent}`)
+      .join(',') + (pricingSuggestionsLoading ? '|pricing-loading' : '|pricing-ready')
 
   return (
     <div className="order-detail">
@@ -239,6 +243,7 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
         totalRial={order.total_rial}
         onAnnouncePrice={handleAnnouncePrice}
         saving={announcing}
+        pricingSuggestions={pricingSuggestions}
       />
 
       {eligibleForInvoice && !invoiceLoading && (

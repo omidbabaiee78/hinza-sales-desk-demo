@@ -71,25 +71,36 @@ export default function CustomerOrderDetail({ orderId, onBack }) {
         {items.length === 0 ? (
           <p className="order-items-warning">اقلام این سفارش ثبت نشده‌اند.</p>
         ) : (
-          items.map((item) => (
-            <div className="simple-item-row" key={item.id}>
-              <div className="simple-item-name">
-                {item.products?.name_fa || 'محصول نامشخص'}
-                {item.products?.code ? ` ${item.products.code}` : ''}
+          items.map((item) => {
+            const finalUnitPrice =
+              hasPrice && item.unit_price_rial != null
+                ? Math.round(item.unit_price_rial * (1 - (item.discount_percent || 0) / 100))
+                : null
+            return (
+              <div className="simple-item-row" key={item.id}>
+                <div className="simple-item-name">
+                  {item.products?.name_fa || 'محصول نامشخص'}
+                  {item.products?.code ? ` ${item.products.code}` : ''}
+                </div>
+                <div className="simple-item-qty">{formatKg(item.quantity_kg)}</div>
+                {hasPrice && item.unit_price_rial != null && (
+                  <div className="simple-item-price">
+                    قیمت هر کیلو: {formatRialPerKg(item.unit_price_rial)}
+                  </div>
+                )}
+                {hasPrice && item.discount_percent > 0 && (
+                  <div className="simple-item-discount">
+                    تخفیف شما: ٪{item.discount_percent}
+                  </div>
+                )}
+                {finalUnitPrice != null && (
+                  <div className="simple-item-final-price">
+                    قیمت نهایی: {formatRialPerKg(finalUnitPrice)}
+                  </div>
+                )}
               </div>
-              <div className="simple-item-qty">{formatKg(item.quantity_kg)}</div>
-              {hasPrice && item.unit_price_rial != null && (
-                <div className="simple-item-price">
-                  قیمت هر کیلو: {formatRialPerKg(item.unit_price_rial)}
-                </div>
-              )}
-              {hasPrice && item.discount_percent > 0 && (
-                <div className="simple-item-discount">
-                  تخفیف: ٪{item.discount_percent}
-                </div>
-              )}
-            </div>
-          ))
+            )
+          })
         )}
 
         {hasPrice && (

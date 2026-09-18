@@ -32,7 +32,8 @@
 }
 
 .simple-item-price,
-.simple-item-discount {
+.simple-item-discount,
+.simple-item-final-price {
   font-size: 13px;
   color: var(--text-muted);
 }

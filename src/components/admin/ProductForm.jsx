@@ -2,7 +2,12 @@ import { useState } from 'react'
 import ErrorBanner from '../common/ErrorBanner'
 import '../common/Modal.css'
 
-const EMPTY_FORM = { code: '', name_fa: '', category: '', description_fa: '' }
+const EMPTY_FORM = {
+  code: '',
+  name_fa: '',
+  category: '',
+  description_fa: '',
+}
 
 export default function ProductForm({ initialProduct, onSave, onCancel }) {
   const [form, setForm] = useState(
@@ -77,7 +82,6 @@ export default function ProductForm({ initialProduct, onSave, onCancel }) {
               onChange={(e) => handleChange('description_fa', e.target.value)}
             />
           </label>
-
           <ErrorBanner message={error} />
 
           <div className="modal-actions">
