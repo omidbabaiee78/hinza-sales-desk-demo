@@ -8,6 +8,7 @@ import StatusBadge from '../orders/StatusBadge'
 import OrderTimeline from '../orders/OrderTimeline'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
+import MoneyEquivalent from '../common/MoneyEquivalent'
 import '../orders/OrderDetail.css'
 import './CustomerOrderDetail.css'
 
@@ -105,7 +106,10 @@ export default function CustomerOrderDetail({ orderId, onBack }) {
 
         {hasPrice && (
           <div className="simple-total-row">
-            <span>مبلغ کل</span>
+            <div>
+              <span>مبلغ کل</span>
+              <MoneyEquivalent rial={order.total_rial} />
+            </div>
             <strong>{formatRial(order.total_rial)}</strong>
           </div>
         )}

@@ -13,7 +13,8 @@
 .profile-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-card, 10px);
+  box-shadow: var(--shadow-card);
   padding: 20px;
 }
 

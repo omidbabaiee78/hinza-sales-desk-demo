@@ -1,0 +1,58 @@
+.money-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.money-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.money-input-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.money-input-unit {
+  display: flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.money-input-unit button {
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast, 160ms ease),
+    color var(--transition-fast, 160ms ease);
+}
+
+.money-input-unit button + button {
+  border-right: 1px solid var(--border);
+}
+
+.money-input-unit button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.money-input-equivalent {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

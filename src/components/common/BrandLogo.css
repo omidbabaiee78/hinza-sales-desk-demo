@@ -1,0 +1,61 @@
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-logo img,
+.brand-logo-fallback {
+  display: block;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.brand-logo-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brand-logo-text {
+  font-weight: 700;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.brand-logo-sm img,
+.brand-logo-sm .brand-logo-fallback {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
+.brand-logo-sm .brand-logo-text {
+  font-size: 14px;
+}
+
+.brand-logo-md img,
+.brand-logo-md .brand-logo-fallback {
+  width: 40px;
+  height: 40px;
+  font-size: 13px;
+}
+
+.brand-logo-md .brand-logo-text {
+  font-size: 17px;
+}
+
+.brand-logo-lg img,
+.brand-logo-lg .brand-logo-fallback {
+  width: 64px;
+  height: 64px;
+  font-size: 18px;
+}
+
+.brand-logo-lg .brand-logo-text {
+  font-size: 20px;
+}

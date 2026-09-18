@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import JalaliDateInput from '../common/JalaliDateInput'
 import ErrorBanner from '../common/ErrorBanner'
+import MoneyInput from '../common/MoneyInput'
 import { todayJalaali, jalaaliToGregorianIso } from '../../utils/jalali'
 import './PaymentForm.css'
 
@@ -10,7 +11,7 @@ function todayIso() {
 }
 
 export default function PaymentForm({ onSubmit, onCancel, submitting }) {
-  const [amount, setAmount] = useState('')
+  const [amountRial, setAmountRial] = useState('')
   const [paidAt, setPaidAt] = useState(todayIso())
   const [method, setMethod] = useState('')
   const [referenceCode, setReferenceCode] = useState('')
@@ -21,7 +22,7 @@ export default function PaymentForm({ onSubmit, onCancel, submitting }) {
     e.preventDefault()
     setError('')
 
-    const amountNumber = Number(amount)
+    const amountNumber = Number(amountRial)
     if (!amountNumber || amountNumber <= 0) {
       setError('لطفاً مبلغ پرداختی معتبر وارد کنید.')
       return
@@ -47,14 +48,8 @@ export default function PaymentForm({ onSubmit, onCancel, submitting }) {
   return (
     <form className="payment-form" onSubmit={handleSubmit}>
       <label>
-        مبلغ پرداختی (ریال) *
-        <input
-          type="number"
-          min="1"
-          required
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+        مبلغ پرداختی *
+        <MoneyInput valueRial={amountRial} onChangeRial={setAmountRial} required />
       </label>
       <label>
         تاریخ پرداخت *

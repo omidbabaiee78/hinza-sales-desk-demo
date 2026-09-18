@@ -1,24 +1,113 @@
 .auth-shell {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
+}
+
+.auth-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 860px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dark, restrained branding panel - the one place this phase intentionally
+   departs from the light surface, contained to a single column so the rest
+   of the app stays white/light-gray. */
+.auth-branding {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  gap: 10px;
+  padding: 48px 32px;
+  background: linear-gradient(150deg, #111827 0%, #1e293b 55%, #111827 100%);
+  color: #fff;
+  text-align: center;
+}
+
+/* A faint scatter of pigment-colored dots, purely decorative and kept far
+   below the text in contrast/opacity so it never competes with content. */
+.auth-branding::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(6px 6px at 12% 18%, var(--brand-dot-cyan) 0, transparent 60%),
+    radial-gradient(5px 5px at 85% 12%, var(--brand-dot-orange) 0, transparent 60%),
+    radial-gradient(4px 4px at 22% 82%, var(--brand-dot-purple) 0, transparent 60%),
+    radial-gradient(5px 5px at 78% 78%, var(--brand-dot-green) 0, transparent 60%),
+    radial-gradient(4px 4px at 92% 55%, var(--brand-dot-red) 0, transparent 60%),
+    radial-gradient(3px 3px at 8% 55%, var(--brand-dot-cyan) 0, transparent 60%);
+}
+
+.auth-branding > * {
+  position: relative;
+  z-index: 1;
+}
+
+.auth-branding h1 {
+  margin: 10px 0 0;
+  font-size: 26px;
+  color: #fff;
+}
+
+.auth-branding p {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 280px;
+}
+
+.auth-branding-dots {
+  margin-top: 22px;
+}
+
+.auth-form-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px 24px;
+}
+
+.auth-contact-link {
+  display: block;
+  margin: 14px auto 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auth-contact-link:hover {
+  text-decoration: underline;
 }
 
 .auth-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-card, 12px);
   padding: 32px;
   width: 100%;
   max-width: 440px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card, var(--shadow-sm));
 }
 
-.auth-panel h1 {
-  margin: 0 0 4px;
-  font-size: 22px;
+.auth-panel-title {
+  margin: 0 0 18px;
+  font-size: 20px;
   text-align: center;
 }
 
@@ -133,10 +222,10 @@
 .status-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-card, 12px);
   padding: 40px 32px;
   max-width: 440px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card, var(--shadow-sm));
 }
 
 .status-panel h1 {

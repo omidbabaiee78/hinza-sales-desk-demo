@@ -46,28 +46,10 @@
   justify-self: start;
 }
 
-.order-meta-row {
-  display: flex;
-  gap: 14px;
+.order-date-note {
   margin: 18px 0 14px;
-}
-
-.order-meta-row label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   font-size: 13px;
-  font-weight: 500;
   color: var(--text-muted);
-}
-
-.order-meta-row input {
-  font: inherit;
-  padding: 9px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-h);
 }
 
 .order-note-field {

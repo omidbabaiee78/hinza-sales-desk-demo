@@ -25,8 +25,7 @@ export default function LoginForm({ onSignIn, onSwitchToRegister }) {
 
   return (
     <div className="auth-panel">
-      <h1>هینزا پلیمر</h1>
-      <p className="auth-subtitle">ورود به پنل</p>
+      <h2 className="auth-panel-title">ورود به پنل</h2>
 
       <form onSubmit={handleSubmit}>
         <label>

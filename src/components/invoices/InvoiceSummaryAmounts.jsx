@@ -1,4 +1,5 @@
 import { formatRial } from '../../utils/formatters'
+import MoneyEquivalent from '../common/MoneyEquivalent'
 import './InvoiceSummaryAmounts.css'
 
 export default function InvoiceSummaryAmounts({
@@ -19,7 +20,10 @@ export default function InvoiceSummaryAmounts({
         <strong>{formatRial(discountRial)}</strong>
       </div>
       <div className="invoice-amount-row invoice-amount-final">
-        <span>مبلغ نهایی</span>
+        <div>
+          <span>مبلغ نهایی</span>
+          <MoneyEquivalent rial={totalRial} className="no-print" />
+        </div>
         <strong>{formatRial(totalRial)}</strong>
       </div>
       <div className="invoice-amount-row">
@@ -27,7 +31,10 @@ export default function InvoiceSummaryAmounts({
         <strong>{formatRial(paidRial)}</strong>
       </div>
       <div className="invoice-amount-row invoice-amount-remaining">
-        <span>مانده</span>
+        <div>
+          <span>مانده</span>
+          <MoneyEquivalent rial={remainingRial} className="no-print" />
+        </div>
         <strong>{formatRial(remainingRial)}</strong>
       </div>
     </div>

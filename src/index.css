@@ -10,6 +10,10 @@
   --accent-border: rgba(37, 99, 235, 0.5);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 20px 40px rgba(16, 24, 40, 0.25);
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 2px 8px rgba(16, 24, 40, 0.06);
+  --shadow-card-hover: 0 6px 16px rgba(16, 24, 40, 0.10);
+  --radius-card: 12px;
+  --transition-fast: 160ms ease;
 
   --status-new-bg: #eef2ff;
   --status-new-text: #4338ca;
@@ -23,6 +27,14 @@
   --status-won-text: #15803d;
   --status-lost-bg: #fee2e2;
   --status-lost-text: #b91c1c;
+
+  /* Controlled decorative accents inspired by the Hinza logo, used only for
+     the small polymer-pellet motif - never for primary actions or status. */
+  --brand-dot-cyan: #0891b2;
+  --brand-dot-red: #dc2626;
+  --brand-dot-orange: #f59e0b;
+  --brand-dot-green: #16a34a;
+  --brand-dot-purple: #7c3aed;
 
   --sans: 'Vazirmatn', system-ui, 'Segoe UI', Roboto, sans-serif;
   font: 15px/1.5 var(--sans);
@@ -55,6 +67,12 @@ button {
   font-family: inherit;
 }
 
+.btn-primary,
+.btn-secondary {
+  transition: background-color var(--transition-fast), border-color var(--transition-fast),
+    transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
 .btn-primary {
   background: var(--accent);
   color: #fff;
@@ -67,6 +85,11 @@ button {
 
 .btn-primary:hover {
   background: #1d4ed8;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+}
+
+.btn-primary:active {
+  transform: translateY(1px);
 }
 
 .btn-secondary {
@@ -81,5 +104,32 @@ button {
 
 .btn-secondary:hover {
   background: var(--surface-hover);
+  border-color: var(--accent-border);
+}
+
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-link:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+/* Small colored accent bar for customer-facing section headings - a
+   restrained brand touch, never used for flashy/decorative headings. */
+.accent-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accent-heading::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 

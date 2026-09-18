@@ -16,16 +16,23 @@
   align-items: flex-start;
   gap: 6px;
   padding: 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-card, 10px);
   background: var(--surface);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card, var(--shadow-sm));
   text-align: right;
   font-family: inherit;
+  transition: box-shadow var(--transition-fast, 160ms ease),
+    border-color var(--transition-fast, 160ms ease),
+    transform var(--transition-fast, 160ms ease);
 }
 
-.dashboard-card:hover {
-  border-color: var(--accent-border);
+@media (hover: hover) {
+  .dashboard-card:hover {
+    border-color: var(--accent-border);
+    box-shadow: var(--shadow-card-hover, var(--shadow-sm));
+    transform: translateY(-2px);
+  }
 }
 
 .dashboard-card-value {

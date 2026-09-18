@@ -6,14 +6,18 @@
   font-size: 13px;
 }
 
-.order-items input {
-  width: 100px;
+.order-items .discount-input {
+  width: 90px;
   font: inherit;
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
+}
+
+.order-items .money-input {
+  min-width: 200px;
 }
 
 .order-total-row {

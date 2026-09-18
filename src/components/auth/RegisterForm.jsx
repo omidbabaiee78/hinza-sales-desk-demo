@@ -60,8 +60,10 @@ export default function RegisterForm({ onRegistered, onSwitchToLogin }) {
 
   return (
     <div className="auth-panel">
-      <h1>هینزا پلیمر</h1>
-      <p className="auth-subtitle">ثبت‌نام مشتری جدید</p>
+      <h2 className="auth-panel-title">ثبت‌نام مشتری جدید</h2>
+      <p className="auth-subtitle">
+        پس از ثبت درخواست، حساب شما توسط هینزا بررسی و تأیید می‌شود.
+      </p>
 
       <form onSubmit={handleSubmit}>
         <div className="auth-row">

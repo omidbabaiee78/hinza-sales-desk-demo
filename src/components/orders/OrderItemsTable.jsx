@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { formatRial, formatRialPerKg, formatKg } from '../../utils/formatters'
 import { resolveSuggestedDiscountPercent } from '../../utils/pricing'
+import MoneyInput from '../common/MoneyInput'
 import '../common/DataTable.css'
 import './OrderItemsTable.css'
 
@@ -127,18 +128,17 @@ export default function OrderItemsTable({
                   {editable ? (
                     <>
                       <td>
-                        <input
-                          type="number"
-                          min="0"
-                          value={row.unit_price_rial ?? ''}
-                          onChange={(e) =>
-                            handleChange(item.id, 'unit_price_rial', e.target.value)
+                        <MoneyInput
+                          valueRial={row.unit_price_rial ?? ''}
+                          onChangeRial={(rial) =>
+                            handleChange(item.id, 'unit_price_rial', rial)
                           }
                         />
                       </td>
                       <td>
                         <input
                           type="number"
+                          className="discount-input"
                           min="0"
                           max="100"
                           value={row.discount_percent ?? ''}

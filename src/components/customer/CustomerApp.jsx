@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import AppShell from '../layout/AppShell'
+import BrandLogo from '../common/BrandLogo'
+import Footer from '../common/Footer'
+import QuickContact from '../common/QuickContact'
 import CustomerDashboard from './CustomerDashboard'
 import CompanyProfile from './CompanyProfile'
 import NewOrderPage from './NewOrderPage'
@@ -10,23 +13,34 @@ import CustomerInvoiceDetail from './CustomerInvoiceDetail'
 import AccountPage from './AccountPage'
 
 const NAV_ITEMS = [
-  { key: 'dashboard', label: 'داشبورد من' },
+  { key: 'dashboard', label: 'داشبورد' },
   { key: 'newOrder', label: 'ثبت سفارش' },
-  { key: 'orders', label: 'سفارش‌های من' },
+  { key: 'orders', label: 'سفارش‌ها' },
   { key: 'invoices', label: 'فاکتورها' },
-  { key: 'account', label: 'حساب و پرداخت‌ها' },
-  { key: 'profile', label: 'پروفایل شرکت' },
+  { key: 'account', label: 'حساب' },
+  { key: 'profile', label: 'پروفایل' },
+  { key: 'contact', label: 'تماس با ما' },
 ]
 
-export default function CustomerApp({ profile, company, onSignOut }) {
+export default function CustomerApp({ profile, company, onSignOut, onOpenContact }) {
   const [activeKey, setActiveKey] = useState('dashboard')
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
 
   function navigate(key) {
+    if (key === 'contact') {
+      onOpenContact()
+      return
+    }
     setActiveKey(key)
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
+  }
+
+  function openOrder(orderId) {
+    setActiveKey('orders')
+    setSelectedInvoiceId(null)
+    setSelectedOrderId(orderId)
   }
 
   function openInvoice(invoiceId) {
@@ -39,14 +53,22 @@ export default function CustomerApp({ profile, company, onSignOut }) {
     <AppShell
       title="هینزا پلیمر"
       subtitle={company?.name || 'پرتال مشتریان'}
+      logo={<BrandLogo size="sm" />}
       navItems={NAV_ITEMS}
       activeKey={activeKey}
       onNavigate={navigate}
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
+      footer={<Footer />}
+      floatingAction={<QuickContact />}
     >
       {activeKey === 'dashboard' && (
-        <CustomerDashboard company={company} onNavigate={navigate} />
+        <CustomerDashboard
+          profile={profile}
+          company={company}
+          onNavigate={navigate}
+          onOpenOrder={openOrder}
+        />
       )}
       {activeKey === 'newOrder' && (
         <NewOrderPage

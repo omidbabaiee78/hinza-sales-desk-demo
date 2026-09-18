@@ -6,6 +6,7 @@ import { describeBalance } from '../../utils/balance'
 import InvoiceStatusBadge from '../invoices/InvoiceStatusBadge'
 import PaymentsList from '../invoices/PaymentsList'
 import ErrorBanner from '../common/ErrorBanner'
+import MoneyEquivalent from '../common/MoneyEquivalent'
 import '../common/DataTable.css'
 import './AccountPage.css'
 
@@ -44,6 +45,7 @@ export default function AccountPage({ company, onOpenInvoice }) {
             <span className={`balance-value tone-${balanceInfo.tone}`}>
               {formatRial(balanceInfo.amount)}
             </span>
+            <MoneyEquivalent rial={balanceInfo.amount} />
             <span className="balance-sublabel">{balanceInfo.label}</span>
           </>
         )}

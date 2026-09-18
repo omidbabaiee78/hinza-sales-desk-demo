@@ -1,0 +1,32 @@
+.polymer-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.polymer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.polymer-dot-cyan {
+  background: var(--brand-dot-cyan);
+}
+
+.polymer-dot-orange {
+  background: var(--brand-dot-orange);
+}
+
+.polymer-dot-red {
+  background: var(--brand-dot-red);
+}
+
+.polymer-dot-green {
+  background: var(--brand-dot-green);
+}
+
+.polymer-dot-purple {
+  background: var(--brand-dot-purple);
+}

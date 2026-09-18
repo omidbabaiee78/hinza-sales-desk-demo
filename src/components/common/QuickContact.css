@@ -1,0 +1,88 @@
+.quick-contact {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 80;
+}
+
+.quick-contact-fab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-card-hover, 0 6px 16px rgba(16, 24, 40, 0.18));
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.quick-contact-fab:hover {
+  background: #1d4ed8;
+}
+
+.quick-contact-fab:active {
+  transform: scale(0.97);
+}
+
+.quick-contact-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card-hover, var(--shadow-lg));
+  padding: 6px;
+}
+
+.quick-contact-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--text-h);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color var(--transition-fast);
+}
+
+.quick-contact-item:hover {
+  background: var(--surface-hover);
+}
+
+.quick-contact-item svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Compact circular button on narrow screens so it never competes with
+   page content or bottom action buttons. */
+@media (max-width: 560px) {
+  .quick-contact-fab {
+    padding: 0;
+    width: 52px;
+    height: 52px;
+    justify-content: center;
+  }
+
+  .quick-contact-fab-label {
+    display: none;
+  }
+
+  .quick-contact-menu {
+    left: 0;
+    min-width: 170px;
+  }
+}

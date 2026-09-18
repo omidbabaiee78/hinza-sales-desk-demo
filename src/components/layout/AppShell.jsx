@@ -4,11 +4,14 @@ import './AppShell.css'
 export default function AppShell({
   title,
   subtitle,
+  logo,
   navItems,
   activeKey,
   onNavigate,
   userLabel,
   onSignOut,
+  footer,
+  floatingAction,
   children,
 }) {
   const [signingOut, setSigningOut] = useState(false)
@@ -26,6 +29,7 @@ export default function AppShell({
     <div className="shell">
       <aside className="shell-sidebar">
         <div className="shell-brand">
+          {logo && <div className="shell-brand-logo">{logo}</div>}
           <h1>{title}</h1>
           {subtitle && <p>{subtitle}</p>}
         </div>
@@ -56,7 +60,9 @@ export default function AppShell({
           </button>
         </header>
         <main className="shell-content">{children}</main>
+        {footer}
       </div>
+      {floatingAction}
     </div>
   )
 }

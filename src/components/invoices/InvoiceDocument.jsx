@@ -77,12 +77,6 @@ export default function InvoiceDocument({
             <strong>{company.city}</strong>
           </div>
         )}
-        {company?.address && (
-          <div className="invoice-doc-buyer-row">
-            <span>آدرس</span>
-            <strong>{company.address}</strong>
-          </div>
-        )}
       </div>
 
       {invoice.note && (

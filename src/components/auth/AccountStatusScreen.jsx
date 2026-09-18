@@ -18,7 +18,7 @@ const VARIANTS = {
   },
 }
 
-export default function AccountStatusScreen({ variant, onSignOut }) {
+export default function AccountStatusScreen({ variant, onSignOut, onOpenContact }) {
   const content = VARIANTS[variant] || VARIANTS.unknown
 
   return (
@@ -29,6 +29,11 @@ export default function AccountStatusScreen({ variant, onSignOut }) {
         <button type="button" className="btn-secondary" onClick={onSignOut}>
           خروج
         </button>
+        {onOpenContact && (
+          <button type="button" className="auth-contact-link" onClick={onOpenContact}>
+            تماس با ما
+          </button>
+        )}
       </div>
     </div>
   )

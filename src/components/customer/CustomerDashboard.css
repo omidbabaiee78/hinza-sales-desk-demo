@@ -1,0 +1,117 @@
+.dashboard-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 12px);
+  box-shadow: var(--shadow-card);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.dashboard-hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 1;
+}
+
+.dashboard-hero-brand h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.dashboard-hero-company {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dashboard-hero-tagline {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.dashboard-hero-actions {
+  z-index: 1;
+}
+
+.dashboard-hero-dots {
+  position: absolute;
+  bottom: 14px;
+  left: 24px;
+  opacity: 0.6;
+}
+
+.customer-dashboard-cta {
+  font-size: 15px;
+  padding: 11px 20px;
+}
+
+.latest-order-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 10px);
+  box-shadow: var(--shadow-card);
+  padding: 18px 20px;
+  margin-bottom: 20px;
+}
+
+.latest-order-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.latest-order-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.latest-order-body {
+  margin-bottom: 12px;
+}
+
+.customer-shortcut-grid {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 4px;
+}
+
+@media (max-width: 560px) {
+  .dashboard-hero {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    padding: 20px;
+  }
+
+  .dashboard-hero-brand {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .dashboard-hero-dots {
+    position: static;
+    display: flex;
+    width: 100%;
+    justify-content: center;
+    margin-top: 4px;
+    opacity: 0.8;
+  }
+
+  .customer-shortcut-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .customer-dashboard-cta {
+    width: 100%;
+  }
+}

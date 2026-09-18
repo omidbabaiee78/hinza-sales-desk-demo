@@ -2,11 +2,17 @@ import { useState } from 'react'
 import { useActiveProducts } from '../../hooks/useActiveProducts'
 import { useCreateOrder } from '../../hooks/useCreateOrder'
 import ErrorBanner from '../common/ErrorBanner'
-import JalaliDateInput from '../common/JalaliDateInput'
+import { todayJalaali, jalaaliToGregorianIso } from '../../utils/jalali'
+import { formatJalaliDate } from '../../utils/formatters'
 import './NewOrderPage.css'
 
 function emptyItem() {
   return { key: crypto.randomUUID(), productId: '', quantityKg: '', note: '' }
+}
+
+function todayIso() {
+  const { jy, jm, jd } = todayJalaali()
+  return jalaaliToGregorianIso(jy, jm, jd)
 }
 
 export default function NewOrderPage({ onCreated }) {
@@ -15,10 +21,15 @@ export default function NewOrderPage({ onCreated }) {
   const { createOrder, submitting } = useCreateOrder()
 
   const [items, setItems] = useState([emptyItem()])
-  const [requestedDate, setRequestedDate] = useState('')
   const [customerNote, setCustomerNote] = useState('')
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+
+  // The order date is never customer-editable: it's always today, and the
+  // backend (create_customer_order) is the real authority that stamps the
+  // Iran/Tehran date regardless of what's sent here. This is only kept for
+  // RPC signature compatibility.
+  const requestedDate = todayIso()
 
   function updateItem(key, field, value) {
     setItems((prev) =>
@@ -37,11 +48,6 @@ export default function NewOrderPage({ onCreated }) {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-
-    if (!requestedDate) {
-      setError('لطفاً تاریخ درخواستی تحویل را انتخاب کنید.')
-      return
-    }
 
     const validItems = items.filter((item) => item.productId && Number(item.quantityKg) > 0)
     if (validItems.length === 0) {
@@ -136,16 +142,9 @@ export default function NewOrderPage({ onCreated }) {
           + افزودن ردیف محصول
         </button>
 
-        <div className="order-meta-row">
-          <label>
-            تاریخ درخواستی تحویل *
-            <JalaliDateInput
-              value={requestedDate}
-              onChange={setRequestedDate}
-              required
-            />
-          </label>
-        </div>
+        <p className="order-date-note">
+          تاریخ ثبت سفارش: امروز — {formatJalaliDate(requestedDate)}
+        </p>
 
         <label className="order-note-field">
           یادداشت سفارش (اختیاری)

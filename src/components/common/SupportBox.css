@@ -1,0 +1,29 @@
+.support-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+}
+
+.support-box-text {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.support-box-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.support-box-actions a.btn-secondary {
+  display: inline-block;
+  text-decoration: none;
+  padding: 6px 14px;
+  font-size: 13px;
+}

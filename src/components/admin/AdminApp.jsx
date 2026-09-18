@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import AppShell from '../layout/AppShell'
+import BrandLogo from '../common/BrandLogo'
 import PlaceholderSection from '../common/PlaceholderSection'
 import AdminDashboard from './AdminDashboard'
 import RegistrationRequestsPage from './RegistrationRequestsPage'
@@ -65,6 +66,7 @@ export default function AdminApp({ profile, onSignOut }) {
     <AppShell
       title="پنل هینزا"
       subtitle="مدیریت فروش B2B"
+      logo={<BrandLogo size="sm" />}
       navItems={NAV_ITEMS}
       activeKey={activeKey}
       onNavigate={navigate}
