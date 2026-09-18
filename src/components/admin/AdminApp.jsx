@@ -10,6 +10,7 @@ import AdminInvoicesPage from './AdminInvoicesPage'
 import AdminInvoiceDetail from './AdminInvoiceDetail'
 import AdminCustomersPage from './AdminCustomersPage'
 import AdminCustomerDetail from './AdminCustomerDetail'
+import AdminFollowUpsPage from './AdminFollowUpsPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
@@ -24,7 +25,6 @@ const NAV_ITEMS = [
 
 const PLACEHOLDER_TITLES = {
   payments: 'پرداخت‌ها',
-  followUps: 'پیگیری‌ها',
 }
 
 export default function AdminApp({ profile, onSignOut }) {
@@ -54,6 +54,13 @@ export default function AdminApp({ profile, onSignOut }) {
     setSelectedOrderId(orderId)
   }
 
+  function openCustomer(companyId) {
+    setActiveKey('customers')
+    setSelectedOrderId(null)
+    setSelectedInvoiceId(null)
+    setSelectedCustomerId(companyId)
+  }
+
   return (
     <AppShell
       title="پنل هینزا"
@@ -64,7 +71,9 @@ export default function AdminApp({ profile, onSignOut }) {
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
     >
-      {activeKey === 'dashboard' && <AdminDashboard onNavigate={navigate} />}
+      {activeKey === 'dashboard' && (
+        <AdminDashboard onNavigate={navigate} onOpenCustomer={openCustomer} />
+      )}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&
         (selectedOrderId ? (
@@ -97,6 +106,13 @@ export default function AdminApp({ profile, onSignOut }) {
         ) : (
           <AdminCustomersPage onOpenCustomer={setSelectedCustomerId} />
         ))}
+      {activeKey === 'followUps' && (
+        <AdminFollowUpsPage
+          onOpenOrder={openOrder}
+          onOpenInvoice={openInvoice}
+          onOpenCustomer={openCustomer}
+        />
+      )}
       {PLACEHOLDER_TITLES[activeKey] && (
         <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />
       )}

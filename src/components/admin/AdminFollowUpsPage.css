@@ -1,0 +1,14 @@
+.attention-group {
+  margin-bottom: 24px;
+}
+
+.attention-group h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.attention-group-count {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 13px;
+}
