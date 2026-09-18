@@ -72,7 +72,11 @@ export default function AdminApp({ profile, onSignOut }) {
       onSignOut={onSignOut}
     >
       {activeKey === 'dashboard' && (
-        <AdminDashboard onNavigate={navigate} onOpenCustomer={openCustomer} />
+        <AdminDashboard
+          onNavigate={navigate}
+          onOpenOrder={openOrder}
+          onOpenCustomer={openCustomer}
+        />
       )}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&

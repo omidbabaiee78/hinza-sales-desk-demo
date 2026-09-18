@@ -40,7 +40,7 @@ export default function AdminFollowUpsPage({ onOpenOrder, onOpenInvoice, onOpenC
 
       {loading && <p className="profile-empty">در حال بارگذاری...</p>}
       {!loading && items.length === 0 && (
-        <p className="profile-empty">در حال حاضر موردی نیاز به توجه ندارد.</p>
+        <p className="profile-empty">فعلاً موردی نیاز به پیگیری ندارد.</p>
       )}
 
       {!loading &&
