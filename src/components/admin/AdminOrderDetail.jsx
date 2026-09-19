@@ -13,6 +13,7 @@ import OrderTimeline from '../orders/OrderTimeline'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
 import JalaliDateInput from '../common/JalaliDateInput'
+import DeleteOrderModal from './DeleteOrderModal'
 import '../orders/OrderDetail.css'
 
 const INVOICE_ELIGIBLE_STATUSES = ['admin_approved', 'delivered']
@@ -35,7 +36,7 @@ const HELPER_TEXT_BY_STATUS = {
 export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
   const { order, company, creator, loading, error, refresh } = useOrder(orderId)
   const { events, refresh: refreshEvents } = useOrderEvents(orderId)
-  const { busy, transitionStatus, saveAdminNote, saveItemPricing } =
+  const { busy, transitionStatus, saveAdminNote, saveItemPricing, deleteOrder } =
     useOrderActions(orderId)
   const { invoice: existingInvoice, loading: invoiceLoading, refresh: refreshOrderInvoice } =
     useOrderInvoice(orderId)
@@ -56,6 +57,8 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
   const [invoiceNote, setInvoiceNote] = useState('')
   const [invoiceError, setInvoiceError] = useState('')
   const [invoiceSuccess, setInvoiceSuccess] = useState('')
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleteSuccess, setDeleteSuccess] = useState('')
 
   if (loading) return <LoadingScreen text="در حال بارگذاری سفارش..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
@@ -118,6 +121,13 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
     }
   }
 
+  async function handleDeleteOrder() {
+    await deleteOrder()
+    setShowDeleteModal(false)
+    setDeleteSuccess('سفارش حذف شد.')
+    setTimeout(onBack, 700)
+  }
+
   async function handleIssueInvoice() {
     setInvoiceError('')
     setInvoiceSuccess('')
@@ -152,6 +162,7 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
 
       <ErrorBanner message={actionError} />
       {statusSuccess && <div className="success-banner">{statusSuccess}</div>}
+      {deleteSuccess && <div className="success-banner">{deleteSuccess}</div>}
 
       <div className="order-detail-grid">
         <section className="order-detail-card">
@@ -308,6 +319,24 @@ export default function AdminOrderDetail({ orderId, onBack, onOpenInvoice }) {
           <h3>تاریخچه سفارش</h3>
           <OrderTimeline events={events} fallbackCreatedAt={order.created_at} />
         </>
+      )}
+
+      <div className="order-danger-zone">
+        <button
+          type="button"
+          className="btn-link btn-link-danger"
+          onClick={() => setShowDeleteModal(true)}
+        >
+          حذف کامل سفارش
+        </button>
+      </div>
+
+      {showDeleteModal && (
+        <DeleteOrderModal
+          orderNumber={order.order_number ?? order.id}
+          onCancel={() => setShowDeleteModal(false)}
+          onConfirm={handleDeleteOrder}
+        />
       )}
     </div>
   )

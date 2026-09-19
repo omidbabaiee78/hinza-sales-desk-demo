@@ -59,5 +59,25 @@ export function useOrderActions(orderId) {
     }
   }
 
-  return { busy, transitionStatus, saveAdminNote, saveItemPricing }
+  // Permanent, admin-only removal. The database itself refuses to delete an
+  // order that already has an invoice (to protect financial records), so we
+  // only translate that specific guard - never delete invoices/payments here.
+  async function deleteOrder() {
+    setBusy(true)
+    try {
+      const { error } = await supabase.from('orders').delete().eq('id', orderId)
+      if (error) {
+        if (error.message?.includes('order_has_invoice_cannot_delete')) {
+          throw new Error(
+            'این سفارش دارای فاکتور است و برای حفظ سوابق مالی قابل حذف کامل نیست.',
+          )
+        }
+        throw new Error(translateDbError(error.message))
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return { busy, transitionStatus, saveAdminNote, saveItemPricing, deleteOrder }
 }
