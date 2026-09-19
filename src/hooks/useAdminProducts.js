@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { buildFullProductPayload } from '../utils/productPayload'
 
 function translateDbError(message) {
   if (!message) return 'خطایی رخ داد. لطفاً دوباره تلاش کنید.'
@@ -8,34 +9,6 @@ function translateDbError(message) {
     return 'ارتباط با سرور برقرار نشد. اتصال اینترنت را بررسی کنید.'
   }
   return 'خطا در ذخیره اطلاعات محصول. لطفاً دوباره تلاش کنید.'
-}
-
-function buildProductPayload({
-  code,
-  name_fa,
-  category,
-  description_fa,
-  active,
-  polymer_base,
-  applications,
-  packaging,
-  availability,
-  image_path,
-  mini_specs,
-}) {
-  return {
-    code,
-    name_fa,
-    category: category || null,
-    description_fa: description_fa || null,
-    active: active !== false,
-    polymer_base: polymer_base || null,
-    applications: applications || [],
-    packaging: packaging || null,
-    availability: availability || 'available',
-    image_path: image_path || null,
-    mini_specs: mini_specs || [],
-  }
 }
 
 function fetchProducts() {
@@ -71,7 +44,7 @@ export function useAdminProducts() {
   }
 
   async function createProduct(form) {
-    const { error } = await supabase.from('products').insert(buildProductPayload(form))
+    const { error } = await supabase.from('products').insert(buildFullProductPayload(form))
     if (error) throw new Error(translateDbError(error.message))
     refresh()
   }
@@ -79,7 +52,7 @@ export function useAdminProducts() {
   async function updateProduct(id, form) {
     const { error } = await supabase
       .from('products')
-      .update(buildProductPayload(form))
+      .update(buildFullProductPayload(form))
       .eq('id', id)
     if (error) throw new Error(translateDbError(error.message))
     refresh()

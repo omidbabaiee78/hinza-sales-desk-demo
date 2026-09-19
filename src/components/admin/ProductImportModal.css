@@ -1,0 +1,137 @@
+.product-import-modal {
+  max-width: 760px;
+}
+
+.import-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: -6px;
+}
+
+.import-select-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.import-select-actions-left {
+  display: flex;
+  gap: 10px;
+}
+
+.import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.import-summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  min-width: 92px;
+}
+
+.import-summary-item.tone-success {
+  background: var(--status-won-bg, #dcfce7);
+}
+
+.import-summary-item.tone-warning {
+  background: var(--status-offer-bg, #ffedd5);
+}
+
+.import-summary-item.tone-danger {
+  background: var(--status-lost-bg, #fee2e2);
+}
+
+.import-summary-count {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-h);
+  line-height: 1;
+}
+
+.import-preview-table {
+  max-height: 340px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+
+.import-status-badge {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.import-status-badge.tone-success {
+  background: var(--status-won-bg, #dcfce7);
+  color: var(--status-won-text, #15803d);
+}
+
+.import-status-badge.tone-warning {
+  background: var(--status-offer-bg, #ffedd5);
+  color: var(--status-offer-text, #c2410c);
+}
+
+.import-status-badge.tone-danger {
+  background: var(--status-lost-bg, #fee2e2);
+  color: var(--status-lost-text, #b91c1c);
+}
+
+.import-confirm-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.import-confirm-box p {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.import-confirm-box ul {
+  margin: 0 0 12px;
+  padding-right: 18px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.import-progress-step p {
+  margin-bottom: 10px;
+}
+
+.import-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.import-progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+@media (max-width: 640px) {
+  .import-select-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .import-select-actions-left {
+    flex-direction: column;
+  }
+}
