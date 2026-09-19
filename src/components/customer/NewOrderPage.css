@@ -75,3 +75,29 @@
 .new-order-page form > .btn-secondary {
   margin-bottom: 6px;
 }
+
+.reorder-banner {
+  background: var(--status-new-bg, #eef2ff);
+  color: var(--status-new-text, #4338ca);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.reorder-banner p {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.reorder-banner-warnings {
+  margin: 0 0 8px;
+  padding-right: 18px;
+  color: var(--status-lost-text, #b91c1c);
+  font-weight: 400;
+}
+
+.reorder-banner .btn-link {
+  padding: 0;
+  font-size: 13px;
+}

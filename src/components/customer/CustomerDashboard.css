@@ -80,6 +80,13 @@
   margin-bottom: 12px;
 }
 
+.latest-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .customer-shortcut-grid {
   grid-template-columns: repeat(3, 1fr);
   margin-bottom: 4px;

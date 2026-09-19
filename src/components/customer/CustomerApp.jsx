@@ -31,6 +31,7 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [selectedProductId, setSelectedProductId] = useState(null)
   const [requestedProductId, setRequestedProductId] = useState(null)
+  const [reorderSourceOrderId, setReorderSourceOrderId] = useState(null)
 
   function navigate(key) {
     if (key === 'contact') {
@@ -41,7 +42,10 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
     setSelectedProductId(null)
-    if (key !== 'newOrder') setRequestedProductId(null)
+    if (key !== 'newOrder') {
+      setRequestedProductId(null)
+      setReorderSourceOrderId(null)
+    }
   }
 
   function openOrder(orderId) {
@@ -71,6 +75,15 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
     setSelectedProductId(null)
   }
 
+  // "سفارش مجدد": opens the same order form pre-filled from a previous
+  // order's products/quantities (never its prices) - the form itself
+  // fetches and validates that order, this just navigates to it.
+  function reorderFromOrder(orderId) {
+    setReorderSourceOrderId(orderId)
+    setActiveKey('newOrder')
+    setSelectedOrderId(null)
+  }
+
   return (
     <AppShell
       title="هینزا پلیمر"
@@ -90,6 +103,7 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
           company={company}
           onNavigate={navigate}
           onOpenOrder={openOrder}
+          onReorder={reorderFromOrder}
         />
       )}
       {activeKey === 'products' &&
@@ -105,6 +119,7 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
       {activeKey === 'newOrder' && (
         <NewOrderPage
           initialProductId={requestedProductId}
+          sourceOrderId={reorderSourceOrderId}
           onCreated={(orderId) => {
             setActiveKey('orders')
             setSelectedOrderId(orderId)
@@ -116,9 +131,14 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
           <CustomerOrderDetail
             orderId={selectedOrderId}
             onBack={() => setSelectedOrderId(null)}
+            onReorder={reorderFromOrder}
           />
         ) : (
-          <CustomerOrdersPage company={company} onOpenOrder={setSelectedOrderId} />
+          <CustomerOrdersPage
+            company={company}
+            onOpenOrder={setSelectedOrderId}
+            onReorder={reorderFromOrder}
+          />
         ))}
       {activeKey === 'invoices' &&
         (selectedInvoiceId ? (

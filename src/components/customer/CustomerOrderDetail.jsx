@@ -3,7 +3,7 @@ import { useOrder } from '../../hooks/useOrder'
 import { useOrderEvents } from '../../hooks/useOrderEvents'
 import { useOrderActions } from '../../hooks/useOrderActions'
 import { formatJalaliDate, formatKg, formatRial, formatRialPerKg } from '../../utils/formatters'
-import { getAllowedTransitions } from '../../utils/orderStatus'
+import { getAllowedTransitions, canReorderFromStatus } from '../../utils/orderStatus'
 import StatusBadge from '../orders/StatusBadge'
 import OrderTimeline from '../orders/OrderTimeline'
 import ErrorBanner from '../common/ErrorBanner'
@@ -12,7 +12,7 @@ import MoneyEquivalent from '../common/MoneyEquivalent'
 import '../orders/OrderDetail.css'
 import './CustomerOrderDetail.css'
 
-export default function CustomerOrderDetail({ orderId, onBack }) {
+export default function CustomerOrderDetail({ orderId, onBack, onReorder }) {
   const { order, loading, error, refresh } = useOrder(orderId)
   const { events, refresh: refreshEvents } = useOrderEvents(orderId)
   const { busy, transitionStatus } = useOrderActions(orderId)
@@ -147,6 +147,16 @@ export default function CustomerOrderDetail({ orderId, onBack }) {
       )}
       {order.status === 'delivered' && (
         <p className="simple-message success">سفارش تحویل شد</p>
+      )}
+
+      {canReorderFromStatus(order.status) && (
+        <button
+          type="button"
+          className="btn-secondary btn-block"
+          onClick={() => onReorder(order.id)}
+        >
+          سفارش مجدد
+        </button>
       )}
 
       <button

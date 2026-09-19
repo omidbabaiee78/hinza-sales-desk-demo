@@ -63,6 +63,16 @@ export const STATUS_TONE = {
 
 export const TERMINAL_STATUSES = ['delivered', 'rejected', 'cancelled']
 
+// "سفارش مجدد" only makes sense once an order is no longer actively awaiting
+// someone's action - i.e. everything except the three in-progress statuses.
+// This intentionally covers admin_approved/preparing/ready_for_delivery too,
+// not just the terminal ones.
+const IN_PROGRESS_STATUSES = ['pending_review', 'quoted', 'customer_approved']
+
+export function canReorderFromStatus(status) {
+  return !IN_PROGRESS_STATUSES.includes(status)
+}
+
 // admin_approved now goes straight to delivered (no preparing / ready_for_delivery
 // step in the normal flow). Old orders already sitting in one of those two
 // legacy statuses can still be moved straight to delivered.

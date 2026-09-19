@@ -12,7 +12,7 @@ import SupportBox from '../common/SupportBox'
 import '../common/DashboardCards.css'
 import './CustomerDashboard.css'
 
-export default function CustomerDashboard({ profile, company, onNavigate, onOpenOrder }) {
+export default function CustomerDashboard({ profile, company, onNavigate, onOpenOrder, onReorder }) {
   const { activeOrders, unpaidInvoices, loading, error } = useCustomerDashboardData(company?.id)
   const { balance, loading: balanceLoading } = useCompanyBalance(company?.id)
   const { orders, loading: ordersLoading } = useCustomerOrders(company?.id)
@@ -95,13 +95,24 @@ export default function CustomerDashboard({ profile, company, onNavigate, onOpen
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => onOpenOrder(latestOrder.id)}
-          >
-            مشاهده سفارش
-          </button>
+          <div className="latest-order-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => onOpenOrder(latestOrder.id)}
+            >
+              مشاهده سفارش
+            </button>
+            {latestOrder.status === 'delivered' && (
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onReorder(latestOrder.id)}
+              >
+                سفارش مجدد
+              </button>
+            )}
+          </div>
         </section>
       )}
 

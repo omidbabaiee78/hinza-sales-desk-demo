@@ -1,10 +1,11 @@
 import { useCustomerOrders } from '../../hooks/useCustomerOrders'
 import { formatJalaliDate, formatKg, formatRial } from '../../utils/formatters'
+import { canReorderFromStatus } from '../../utils/orderStatus'
 import StatusBadge from '../orders/StatusBadge'
 import ErrorBanner from '../common/ErrorBanner'
 import '../common/DataTable.css'
 
-export default function CustomerOrdersPage({ company, onOpenOrder }) {
+export default function CustomerOrdersPage({ company, onOpenOrder, onReorder }) {
   const { orders, loading, error, refresh } = useCustomerOrders(company?.id)
 
   return (
@@ -64,6 +65,15 @@ export default function CustomerOrdersPage({ company, onOpenOrder }) {
                     >
                       مشاهده
                     </button>
+                    {canReorderFromStatus(order.status) && (
+                      <button
+                        type="button"
+                        className="btn-link"
+                        onClick={() => onReorder(order.id)}
+                      >
+                        سفارش مجدد
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
