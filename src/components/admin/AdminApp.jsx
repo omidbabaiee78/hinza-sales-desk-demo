@@ -14,12 +14,15 @@ import AdminCustomerDetail from './AdminCustomerDetail'
 import AdminFollowUpsPage from './AdminFollowUpsPage'
 import AdminCrmPage from './AdminCrmPage'
 import AdminReportsPage from './reports/AdminReportsPage'
+import AdminLeadsPage from './leads/AdminLeadsPage'
+import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
   { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
   { key: 'customers', label: 'مشتریان' },
   { key: 'crm', label: 'CRM' },
+  { key: 'leads', label: 'سرنخ‌های فروش' },
   { key: 'orders', label: 'سفارش‌ها' },
   { key: 'products', label: 'محصولات' },
   { key: 'invoices', label: 'فاکتورها' },
@@ -37,12 +40,14 @@ export default function AdminApp({ profile, onSignOut }) {
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [selectedCustomerId, setSelectedCustomerId] = useState(null)
+  const [selectedLeadId, setSelectedLeadId] = useState(null)
 
   function navigate(key) {
     setActiveKey(key)
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
     setSelectedCustomerId(null)
+    setSelectedLeadId(null)
   }
 
   function openInvoice(invoiceId) {
@@ -63,7 +68,16 @@ export default function AdminApp({ profile, onSignOut }) {
     setActiveKey('customers')
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
+    setSelectedLeadId(null)
     setSelectedCustomerId(companyId)
+  }
+
+  function openLead(leadId) {
+    setActiveKey('leads')
+    setSelectedOrderId(null)
+    setSelectedInvoiceId(null)
+    setSelectedCustomerId(null)
+    setSelectedLeadId(leadId)
   }
 
   return (
@@ -126,6 +140,16 @@ export default function AdminApp({ profile, onSignOut }) {
       {activeKey === 'crm' && (
         <AdminCrmPage onOpenOrder={openOrder} onOpenInvoice={openInvoice} onOpenCustomer={openCustomer} />
       )}
+      {activeKey === 'leads' &&
+        (selectedLeadId ? (
+          <AdminLeadDetailPage
+            leadId={selectedLeadId}
+            onBack={() => setSelectedLeadId(null)}
+            onOpenCustomer={openCustomer}
+          />
+        ) : (
+          <AdminLeadsPage onOpenLead={openLead} />
+        ))}
       {activeKey === 'reports' && (
         <AdminReportsPage onOpenCustomer={openCustomer} onOpenInvoice={openInvoice} />
       )}
