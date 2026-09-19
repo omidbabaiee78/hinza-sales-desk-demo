@@ -1,3 +1,5 @@
+import { buildCsv, downloadCsv } from '../csv'
+
 const TEMPLATE_HEADERS = [
   'کد',
   'نام محصول',
@@ -25,29 +27,10 @@ const EXAMPLE_ROW = [
   'TiO2=69% | LF=8',
 ]
 
-function toCsvValue(value) {
-  const text = String(value ?? '')
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-}
-
 export function buildProductImportTemplateCsv() {
-  return [TEMPLATE_HEADERS, EXAMPLE_ROW]
-    .map((row) => row.map(toCsvValue).join(','))
-    .join('\r\n')
+  return buildCsv([TEMPLATE_HEADERS, EXAMPLE_ROW])
 }
 
-// A UTF-8 BOM prefix keeps Excel from mangling Persian text when it opens
-// the downloaded CSV.
 export function downloadProductImportTemplate() {
-  const csv = buildProductImportTemplateCsv()
-  const bom = String.fromCharCode(0xfeff)
-  const blob = new Blob([`${bom}${csv}`], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'نمونه-ورود-گروهی-محصولات.csv'
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  downloadCsv('نمونه-ورود-گروهی-محصولات.csv', buildProductImportTemplateCsv())
 }

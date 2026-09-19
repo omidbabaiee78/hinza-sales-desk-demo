@@ -1,0 +1,312 @@
+.admin-reports-page section {
+  margin-bottom: 24px;
+}
+
+.reports-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+/* ---- filter bar ---- */
+
+.reports-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.reports-period-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reports-preset-chip {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reports-preset-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.reports-custom-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.reports-custom-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.reports-extra-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.reports-extra-filters select {
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-h);
+  min-width: 180px;
+}
+
+/* ---- summary cards ---- */
+
+.reports-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 860px) {
+  .reports-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .reports-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.reports-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: var(--radius-card, 10px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+.reports-summary-card.tone-current {
+  background: var(--status-new-bg, #eef2ff);
+  border-color: transparent;
+}
+
+.reports-summary-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reports-summary-badge {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.reports-summary-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.reports-change {
+  font-size: 12px;
+}
+
+.reports-change.positive {
+  color: var(--status-won-text, #15803d);
+}
+
+.reports-change.negative {
+  color: var(--status-lost-text, #b91c1c);
+}
+
+.reports-change.neutral {
+  color: var(--text-muted);
+}
+
+/* ---- two-column desktop layout ---- */
+
+.reports-two-column {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 900px) {
+  .reports-two-column {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- trend chart ---- */
+
+.reports-trend-legend {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reports-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reports-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.reports-legend-dot.sales {
+  background: var(--accent);
+}
+
+.reports-legend-dot.payments {
+  background: var(--status-won-text, #15803d);
+}
+
+.reports-trend-bars {
+  display: flex;
+  width: 100%;
+  align-items: flex-end;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.reports-trend-bucket {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  /* Grow to fill the full card width when there are few buckets (e.g.
+     "امروز"/"این هفته"), but shrink no further than 36px and let the row
+     scroll horizontally once there are enough buckets to need it. */
+  flex: 1 1 36px;
+  min-width: 36px;
+  max-width: 96px;
+}
+
+.reports-trend-bar-pair {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.reports-trend-bar {
+  width: 10px;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+}
+
+.reports-trend-bar.sales {
+  background: var(--accent);
+}
+
+.reports-trend-bar.payments {
+  background: var(--status-won-text, #15803d);
+}
+
+.reports-trend-bucket-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ---- order status summary ---- */
+
+.reports-status-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .reports-status-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.reports-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  text-align: center;
+}
+
+.reports-status-count {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.reports-status-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reports-status-item.tone-success .reports-status-count {
+  color: var(--status-won-text, #15803d);
+}
+
+.reports-status-item.tone-warning .reports-status-count {
+  color: var(--status-offer-text, #c2410c);
+}
+
+.reports-status-item.tone-danger .reports-status-count {
+  color: var(--status-lost-text, #b91c1c);
+}
+
+/* ---- conversion ---- */
+
+.reports-conversion-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-h);
+  margin: 0 0 6px;
+}
+
+.reports-conversion-caption {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  max-width: 640px;
+}
+
+/* ---- outstanding invoices ---- */
+
+.reports-row-overdue td:first-child {
+  border-right: 3px solid var(--status-lost-text, #b91c1c);
+}

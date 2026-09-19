@@ -13,6 +13,7 @@ import AdminCustomersPage from './AdminCustomersPage'
 import AdminCustomerDetail from './AdminCustomerDetail'
 import AdminFollowUpsPage from './AdminFollowUpsPage'
 import AdminCrmPage from './AdminCrmPage'
+import AdminReportsPage from './reports/AdminReportsPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { key: 'invoices', label: 'فاکتورها' },
   { key: 'payments', label: 'پرداخت‌ها' },
   { key: 'followUps', label: 'پیگیری‌ها' },
+  { key: 'reports', label: 'گزارش‌ها' },
 ]
 
 const PLACEHOLDER_TITLES = {
@@ -123,6 +125,9 @@ export default function AdminApp({ profile, onSignOut }) {
       )}
       {activeKey === 'crm' && (
         <AdminCrmPage onOpenOrder={openOrder} onOpenInvoice={openInvoice} onOpenCustomer={openCustomer} />
+      )}
+      {activeKey === 'reports' && (
+        <AdminReportsPage onOpenCustomer={openCustomer} onOpenInvoice={openInvoice} />
       )}
       {PLACEHOLDER_TITLES[activeKey] && (
         <PlaceholderSection title={PLACEHOLDER_TITLES[activeKey]} />
