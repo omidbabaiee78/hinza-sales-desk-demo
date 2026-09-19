@@ -1,0 +1,152 @@
+.automation-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 12px;
+}
+
+/* ---------- global status banner ---------- */
+
+.automation-global-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-card, 10px);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 16px;
+}
+
+.automation-global-status strong {
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.automation-global-status.is-disabled {
+  border-color: var(--status-lost-text, #b91c1c);
+}
+
+/* ---------- summary grid ---------- */
+
+.automation-summary-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* ---------- task card ---------- */
+
+.automation-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 10px);
+  box-shadow: var(--shadow-card, var(--shadow-sm));
+  padding: 12px 16px;
+}
+
+.automation-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.automation-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.automation-card-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.automation-card-who {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.automation-card-reason {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.automation-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.automation-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 260px;
+  justify-content: flex-end;
+}
+
+.btn-link-danger {
+  color: var(--status-lost-text, #b91c1c);
+}
+
+.automation-priority-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.automation-priority-badge.tone-lost { background: var(--status-lost-bg); color: var(--status-lost-text); }
+.automation-priority-badge.tone-offer { background: var(--status-offer-bg); color: var(--status-offer-text); }
+.automation-priority-badge.tone-contacted { background: var(--status-contacted-bg); color: var(--status-contacted-text); }
+
+/* ---------- rules table ---------- */
+
+.automation-rules-table select {
+  font: inherit;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.automation-rule-disabled td {
+  color: var(--text-muted);
+}
+
+.automation-rule-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* ---------- mobile ---------- */
+
+@media (max-width: 720px) {
+  .automation-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .automation-card-actions {
+    max-width: none;
+    justify-content: flex-start;
+  }
+}

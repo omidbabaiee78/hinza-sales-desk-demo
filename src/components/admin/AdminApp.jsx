@@ -17,10 +17,12 @@ import AdminReportsPage from './reports/AdminReportsPage'
 import AdminLeadsPage from './leads/AdminLeadsPage'
 import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 import AdminTodayPage from './today/AdminTodayPage'
+import AdminAutomationPage from './automation/AdminAutomationPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
   { key: 'today', label: 'امروز' },
+  { key: 'automation', label: 'اتوماسیون' },
   { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
   { key: 'customers', label: 'مشتریان' },
   { key: 'crm', label: 'CRM' },
@@ -107,6 +109,14 @@ export default function AdminApp({ profile, onSignOut }) {
           onOpenOrder={openOrder}
           onOpenInvoice={openInvoice}
           onOpenCustomer={openCustomer}
+        />
+      )}
+      {activeKey === 'automation' && (
+        <AdminAutomationPage
+          onNavigate={navigate}
+          onOpenLead={openLead}
+          onOpenOrder={openOrder}
+          onOpenInvoice={openInvoice}
         />
       )}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
