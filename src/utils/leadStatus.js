@@ -60,6 +60,17 @@ export const LEAD_SOURCE_LABELS = {
 }
 export const LEAD_SOURCES = Object.keys(LEAD_SOURCE_LABELS)
 
+// Matches the DB's allowed preferred_channel values exactly - never sent to
+// any provider in this phase, only shown as a per-lead preference/label.
+export const LEAD_PREFERRED_CHANNEL_LABELS = {
+  phone: 'تماس تلفنی',
+  whatsapp: 'واتساپ',
+  sms: 'پیامک',
+  bale: 'بله',
+  email: 'ایمیل',
+}
+export const LEAD_PREFERRED_CHANNELS = Object.keys(LEAD_PREFERRED_CHANNEL_LABELS)
+
 export const LEAD_LOSS_REASON_LABELS = {
   price: 'قیمت',
   competitor: 'خرید از تأمین‌کننده دیگر',
@@ -96,6 +107,10 @@ export function leadPriorityLabel(priority) {
 
 export function leadSourceLabel(source) {
   return LEAD_SOURCE_LABELS[source] || source || '—'
+}
+
+export function leadPreferredChannelLabel(channel) {
+  return LEAD_PREFERRED_CHANNEL_LABELS[channel] || channel || '—'
 }
 
 export function leadLossReasonLabel(reason) {

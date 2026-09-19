@@ -4,13 +4,16 @@ import { useCompanyDirectory } from '../../../hooks/useCompanyDirectory'
 import { useAdminProfiles } from '../../../hooks/useAdminProfiles'
 import { useSalesLeads } from '../../../hooks/useSalesLeads'
 import { formatJalaliDate, formatJalaliDateTime } from '../../../utils/formatters'
-import { leadPriorityLabel, leadSourceLabel } from '../../../utils/leadStatus'
+import { leadPreferredChannelLabel, leadPriorityLabel, leadSourceLabel } from '../../../utils/leadStatus'
 import LoadingScreen from '../../common/LoadingScreen'
 import ErrorBanner from '../../common/ErrorBanner'
 import LeadStatusBadge from './LeadStatusBadge'
 import LeadFollowUpBadge from './LeadFollowUpBadge'
 import LeadQuickContact from './LeadQuickContact'
 import LeadActivityTimeline from './LeadActivityTimeline'
+import LeadReadinessBadge from './LeadReadinessBadge'
+import LeadNextActionBadge from './LeadNextActionBadge'
+import LeadChannelIcons from './LeadChannelIcons'
 import LeadFormModal from './LeadFormModal'
 import LeadActivityFormModal from './LeadActivityFormModal'
 import LeadStatusChangeModal from './LeadStatusChangeModal'
@@ -60,10 +63,36 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
         </button>
         <h2>
           {lead.company_name || lead.contact_name} <LeadStatusBadge status={lead.status} />
+          {lead.do_not_contact && <span className="lead-status-badge tone-lost">عدم تماس</span>}
         </h2>
       </div>
 
       <div className="lead-detail-grid">
+        <section className="lead-detail-card">
+          <h3>هوش سرنخ</h3>
+          <LeadReadinessBadge lead={lead} showReasons />
+          <div className="info-row">
+            <span className="info-label">اقدام پیشنهادی</span>
+            <span className="info-value">
+              <LeadNextActionBadge lead={lead} />
+            </span>
+          </div>
+          <div className="info-row">
+            <span className="info-label">کانال‌های در دسترس</span>
+            <span className="info-value">
+              <LeadChannelIcons lead={lead} />
+            </span>
+          </div>
+          {lead.import_batch_id && (
+            <div className="info-row">
+              <span className="info-label">منبع ورود</span>
+              <span className="info-value">
+                وارد شده از فایل (ردیف {lead.source_row_number || '—'})
+              </span>
+            </div>
+          )}
+        </section>
+
         <section className="lead-detail-card">
           <h3>اطلاعات سرنخ</h3>
           <div className="info-row">
@@ -93,6 +122,18 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             </span>
           </div>
           <div className="info-row">
+            <span className="info-label">وب‌سایت</span>
+            <span className="info-value" dir="ltr">
+              {lead.website ? (
+                <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`} target="_blank" rel="noopener noreferrer">
+                  {lead.website}
+                </a>
+              ) : (
+                '—'
+              )}
+            </span>
+          </div>
+          <div className="info-row">
             <span className="info-label">استان / شهر</span>
             <span className="info-value">
               {[lead.province, lead.city].filter(Boolean).join(' / ') || '—'}
@@ -103,6 +144,10 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             <span className="info-value">{lead.address || '—'}</span>
           </div>
           <div className="info-row">
+            <span className="info-label">صنعت</span>
+            <span className="info-value">{lead.industry || '—'}</span>
+          </div>
+          <div className="info-row">
             <span className="info-label">منبع</span>
             <span className="info-value">{leadSourceLabel(lead.source)}</span>
           </div>
@@ -110,6 +155,24 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             <span className="info-label">اولویت</span>
             <span className="info-value">{leadPriorityLabel(lead.priority)}</span>
           </div>
+          <div className="info-row">
+            <span className="info-label">کانال ترجیحی</span>
+            <span className="info-value">{leadPreferredChannelLabel(lead.preferred_channel)}</span>
+          </div>
+          {lead.tags && lead.tags.length > 0 && (
+            <div className="info-row">
+              <span className="info-label">تگ‌ها</span>
+              <span className="info-value">
+                <div className="lead-product-chips">
+                  {lead.tags.map((tag) => (
+                    <span key={tag} className="lead-product-chip">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </span>
+            </div>
+          )}
           {assignedAdmin && (
             <div className="info-row">
               <span className="info-label">فروشنده مسئول</span>

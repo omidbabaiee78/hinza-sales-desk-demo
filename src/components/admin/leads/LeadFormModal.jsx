@@ -1,12 +1,20 @@
 import { useState } from 'react'
 import { createLead, updateLead } from '../../../services/salesLeads'
 import { findLeadDuplicates } from '../../../utils/leadDuplicates'
-import { LEAD_PRIORITIES, LEAD_SOURCES, leadPriorityLabel, leadSourceLabel } from '../../../utils/leadStatus'
+import {
+  LEAD_PREFERRED_CHANNELS,
+  LEAD_PRIORITIES,
+  LEAD_SOURCES,
+  leadPreferredChannelLabel,
+  leadPriorityLabel,
+  leadSourceLabel,
+} from '../../../utils/leadStatus'
 import { followUpDateOnly, followUpIsoFromDate } from '../../../utils/leadFollowUp'
 import JalaliDateInput from '../../common/JalaliDateInput'
 import ErrorBanner from '../../common/ErrorBanner'
 import LeadProductPicker from './LeadProductPicker'
 import LeadDuplicateWarning from './LeadDuplicateWarning'
+import LeadTagsEditor from './LeadTagsEditor'
 import '../../common/Modal.css'
 import './Leads.css'
 
@@ -17,14 +25,18 @@ function initialFieldsFrom(lead) {
     mobile: lead?.mobile || '',
     phone: lead?.phone || '',
     email: lead?.email || '',
+    website: lead?.website || '',
     province: lead?.province || '',
     city: lead?.city || '',
     address: lead?.address || '',
+    industry: lead?.industry || '',
     source: lead?.source || '',
     priority: lead?.priority || 'medium',
     need_note: lead?.need_note || '',
     notes: lead?.notes || '',
     assigned_to: lead?.assigned_to || '',
+    preferred_channel: lead?.preferred_channel || '',
+    do_not_contact: lead?.do_not_contact || false,
   }
 }
 
@@ -45,6 +57,7 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
   const [submitting, setSubmitting] = useState(false)
   const [duplicateMatches, setDuplicateMatches] = useState(null)
   const [confirmedDuplicates, setConfirmedDuplicates] = useState(false)
+  const [tags, setTags] = useState(() => lead?.tags || [])
 
   function setField(name, value) {
     setFields((prev) => ({ ...prev, [name]: value }))
@@ -66,14 +79,19 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
       mobile: fields.mobile.trim() || null,
       phone: fields.phone.trim() || null,
       email: fields.email.trim() || null,
+      website: fields.website.trim() || null,
       province: fields.province.trim() || null,
       city: fields.city.trim() || null,
       address: fields.address.trim() || null,
+      industry: fields.industry.trim() || null,
       source: fields.source || null,
       priority: fields.priority,
       need_note: fields.need_note.trim() || null,
       notes: fields.notes.trim() || null,
       assigned_to: fields.assigned_to || null,
+      preferred_channel: fields.preferred_channel || null,
+      do_not_contact: fields.do_not_contact,
+      tags,
       next_follow_up_at: followUpIsoFromDate(followUpDate),
     }
   }
@@ -156,6 +174,16 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
               <input type="email" dir="ltr" value={fields.email} onChange={(e) => setField('email', e.target.value)} />
             </label>
             <label>
+              وب‌سایت
+              <input
+                type="text"
+                dir="ltr"
+                placeholder="example.com"
+                value={fields.website}
+                onChange={(e) => setField('website', e.target.value)}
+              />
+            </label>
+            <label>
               استان
               <input type="text" value={fields.province} onChange={(e) => setField('province', e.target.value)} />
             </label>
@@ -166,6 +194,26 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
             <label className="lead-form-span-2">
               آدرس
               <input type="text" value={fields.address} onChange={(e) => setField('address', e.target.value)} />
+            </label>
+            <label>
+              صنعت
+              <input
+                type="text"
+                placeholder="مثال: فیلم، لوله، تزریق"
+                value={fields.industry}
+                onChange={(e) => setField('industry', e.target.value)}
+              />
+            </label>
+            <label>
+              کانال ترجیحی
+              <select value={fields.preferred_channel} onChange={(e) => setField('preferred_channel', e.target.value)}>
+                <option value="">—</option>
+                {LEAD_PREFERRED_CHANNELS.map((c) => (
+                  <option key={c} value={c}>
+                    {leadPreferredChannelLabel(c)}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               منبع
@@ -232,6 +280,20 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
           <label>
             یادداشت
             <textarea rows={3} value={fields.notes} onChange={(e) => setField('notes', e.target.value)} />
+          </label>
+
+          <label>
+            تگ‌ها
+            <LeadTagsEditor tags={tags} onChange={setTags} />
+          </label>
+
+          <label className="product-form-availability">
+            <input
+              type="checkbox"
+              checked={fields.do_not_contact}
+              onChange={(e) => setField('do_not_contact', e.target.checked)}
+            />
+            عدم تماس (این سرنخ نباید تماس گرفته شود)
           </label>
           </fieldset>
 

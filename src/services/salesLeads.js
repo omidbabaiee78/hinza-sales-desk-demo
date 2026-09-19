@@ -126,3 +126,98 @@ export async function convertLeadToExistingCompany(leadId, existingCompanyId) {
   if (error) throw error
   return data
 }
+
+// ---------------------------------------------------------------------------
+// Bulk actions (multi-select on the leads list). Every action here is scoped
+// to the ids the admin explicitly selected - never a filtered/implicit set -
+// and never touches converted/lost leads' terminal fields or history tables.
+// ---------------------------------------------------------------------------
+
+const BULK_ID_CHUNK_SIZE = 200
+const BULK_ROW_BATCH_SIZE = 25
+
+function chunkArray(array, size) {
+  const chunks = []
+  for (let i = 0; i < array.length; i += size) chunks.push(array.slice(i, i + size))
+  return chunks
+}
+
+export async function bulkSetLeadPriority(leadIds, priority) {
+  for (const idChunk of chunkArray(leadIds, BULK_ID_CHUNK_SIZE)) {
+    const { error } = await supabase.from('sales_leads').update({ priority }).in('id', idChunk)
+    if (error) throw error
+  }
+}
+
+export async function bulkSetLeadPreferredChannel(leadIds, preferredChannel) {
+  for (const idChunk of chunkArray(leadIds, BULK_ID_CHUNK_SIZE)) {
+    const { error } = await supabase
+      .from('sales_leads')
+      .update({ preferred_channel: preferredChannel || null })
+      .in('id', idChunk)
+    if (error) throw error
+  }
+}
+
+export async function bulkSetLeadFollowUp(leadIds, nextFollowUpAtIso) {
+  for (const idChunk of chunkArray(leadIds, BULK_ID_CHUNK_SIZE)) {
+    const { error } = await supabase
+      .from('sales_leads')
+      .update({ next_follow_up_at: nextFollowUpAtIso })
+      .in('id', idChunk)
+    if (error) throw error
+  }
+}
+
+// Only ever sets do_not_contact to true in bulk - re-enabling contact stays a
+// deliberate single-lead edit, never a bulk/silent action.
+export async function bulkMarkLeadsDoNotContact(leadIds) {
+  for (const idChunk of chunkArray(leadIds, BULK_ID_CHUNK_SIZE)) {
+    const { error } = await supabase.from('sales_leads').update({ do_not_contact: true }).in('id', idChunk)
+    if (error) throw error
+  }
+}
+
+// Restricted to the 6 active pipeline statuses, same as the single-lead
+// flow - converted/lost each require their own dedicated flow. Logs one
+// status_change activity per lead via a single bulk insert.
+export async function bulkChangeLeadStatus(leadIds, newStatus) {
+  const createdBy = await currentUserId()
+  for (const idChunk of chunkArray(leadIds, BULK_ID_CHUNK_SIZE)) {
+    const { error } = await supabase.from('sales_leads').update({ status: newStatus }).in('id', idChunk)
+    if (error) throw error
+  }
+  const note = `وضعیت به «${leadStatusLabel(newStatus)}» تغییر یافت (تغییر گروهی).`
+  const { error: activityError } = await supabase
+    .from('lead_activities')
+    .insert(leadIds.map((leadId) => ({ lead_id: leadId, activity_type: 'status_change', note, created_by: createdBy })))
+  if (activityError) throw activityError
+}
+
+// Tag sets differ per lead, so this can't be one uniform UPDATE - fetches
+// current tags first, unions the new tag client-side, then writes back in
+// small batches (never one unbounded Promise.all for the whole selection).
+export async function bulkAddLeadTag(leadIds, tag) {
+  const trimmedTag = tag.trim()
+  if (!trimmedTag) return
+
+  const { data: rows, error: fetchError } = await supabase.from('sales_leads').select('id, tags').in('id', leadIds)
+  if (fetchError) throw fetchError
+
+  for (const batch of chunkArray(rows || [], BULK_ROW_BATCH_SIZE)) {
+    const results = await Promise.all(
+      batch.map((row) => {
+        const currentTags = row.tags || []
+        if (currentTags.some((t) => t.toLowerCase() === trimmedTag.toLowerCase())) {
+          return Promise.resolve({ error: null })
+        }
+        return supabase
+          .from('sales_leads')
+          .update({ tags: [...currentTags, trimmedTag] })
+          .eq('id', row.id)
+      }),
+    )
+    const failed = results.find((r) => r.error)
+    if (failed) throw failed.error
+  }
+}

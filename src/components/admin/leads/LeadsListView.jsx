@@ -1,9 +1,10 @@
-import { formatJalaliDate } from '../../../utils/formatters'
-import { leadDisplayName, leadPriorityLabel } from '../../../utils/leadStatus'
+import { leadDisplayName } from '../../../utils/leadStatus'
 import LeadStatusBadge from './LeadStatusBadge'
 import LeadFollowUpBadge from './LeadFollowUpBadge'
 import LeadProductsCell from './LeadProductsCell'
 import LeadQuickContact from './LeadQuickContact'
+import LeadReadinessBadge from './LeadReadinessBadge'
+import LeadNextActionBadge from './LeadNextActionBadge'
 
 function LeadRowActions({ lead, onOpenLead, onQuickFollowUp }) {
   return (
@@ -21,21 +22,39 @@ function LeadRowActions({ lead, onOpenLead, onQuickFollowUp }) {
   )
 }
 
-export default function LeadsListView({ leads, loading, onOpenLead, onQuickFollowUp }) {
+export default function LeadsListView({
+  leads,
+  loading,
+  onOpenLead,
+  onQuickFollowUp,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
+}) {
+  const selectable = Boolean(selectedIds && onToggleSelect)
+  const allSelected = selectable && leads.length > 0 && leads.every((l) => selectedIds.has(l.id))
+  const colCount = selectable ? 11 : 10
+
   return (
     <>
       <div className="table-wrapper lead-table-wrapper">
         <table>
           <thead>
             <tr>
+              {selectable && (
+                <th>
+                  <input type="checkbox" checked={allSelected} onChange={(e) => onToggleSelectAll(e.target.checked)} />
+                </th>
+              )}
               <th>شرکت</th>
               <th>شخص تماس</th>
-              <th>شماره تماس</th>
               <th>شهر</th>
-              <th>محصولات موردنیاز</th>
+              <th>صنعت</th>
+              <th>محصول / نیاز</th>
+              <th>تماس</th>
               <th>وضعیت</th>
-              <th>اولویت</th>
-              <th>آخرین تماس</th>
+              <th>آمادگی پیگیری</th>
+              <th>اقدام پیشنهادی</th>
               <th>پیگیری بعدی</th>
               <th>عملیات</th>
             </tr>
@@ -43,14 +62,14 @@ export default function LeadsListView({ leads, loading, onOpenLead, onQuickFollo
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={10} className="empty-row">
+                <td colSpan={colCount} className="empty-row">
                   در حال بارگذاری...
                 </td>
               </tr>
             )}
             {!loading && leads.length === 0 && (
               <tr>
-                <td colSpan={10} className="empty-row">
+                <td colSpan={colCount} className="empty-row">
                   سرنخی با این فیلتر پیدا نشد.
                 </td>
               </tr>
@@ -58,20 +77,43 @@ export default function LeadsListView({ leads, loading, onOpenLead, onQuickFollo
             {!loading &&
               leads.map((lead) => (
                 <tr key={lead.id} className="clickable-row" onClick={() => onOpenLead(lead.id)}>
-                  <td>{lead.company_name || '—'}</td>
-                  <td>{lead.contact_name || '—'}</td>
-                  <td dir="ltr" style={{ textAlign: 'right' }}>
-                    {lead.mobile || lead.phone || '—'}
+                  {selectable && (
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(lead.id)}
+                        onChange={() => onToggleSelect(lead.id)}
+                      />
+                    </td>
+                  )}
+                  <td>
+                    <span className="lead-cell-clamp" title={lead.company_name || ''}>
+                      {lead.company_name || '—'}
+                    </span>
+                    {lead.do_not_contact && <span className="lead-status-badge tone-lost lead-dnc-tag">عدم تماس</span>}
+                  </td>
+                  <td>
+                    <span className="lead-cell-clamp" title={lead.contact_name || ''}>
+                      {lead.contact_name || '—'}
+                    </span>
                   </td>
                   <td>{lead.city || '—'}</td>
+                  <td>{lead.industry || '—'}</td>
                   <td>
                     <LeadProductsCell products={lead.products} needNote={lead.need_note} />
+                  </td>
+                  <td dir="ltr" style={{ textAlign: 'right' }}>
+                    {lead.mobile || lead.phone || lead.email || '—'}
                   </td>
                   <td>
                     <LeadStatusBadge status={lead.status} />
                   </td>
-                  <td>{leadPriorityLabel(lead.priority)}</td>
-                  <td>{lead.last_contact_at ? formatJalaliDate(lead.last_contact_at) : '—'}</td>
+                  <td>
+                    <LeadReadinessBadge lead={lead} />
+                  </td>
+                  <td>
+                    <LeadNextActionBadge lead={lead} />
+                  </td>
                   <td>
                     <LeadFollowUpBadge nextFollowUpAt={lead.next_follow_up_at} />
                   </td>
@@ -92,14 +134,32 @@ export default function LeadsListView({ leads, loading, onOpenLead, onQuickFollo
             <div key={lead.id} className="lead-card" onClick={() => onOpenLead(lead.id)}>
               <div className="lead-card-top">
                 <div>
+                  {selectable && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(lead.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => onToggleSelect(lead.id)}
+                    />
+                  )}
                   <div className="lead-card-name">{leadDisplayName(lead)}</div>
-                  <div className="lead-card-sub">{lead.city || '—'}</div>
+                  <div className="lead-card-sub">
+                    {[lead.city, lead.industry].filter(Boolean).join(' / ') || '—'}
+                  </div>
                 </div>
                 <LeadStatusBadge status={lead.status} />
               </div>
               <div className="lead-card-row">
                 <span className="lead-card-label">محصولات موردنیاز</span>
                 <LeadProductsCell products={lead.products} needNote={lead.need_note} />
+              </div>
+              <div className="lead-card-row">
+                <span className="lead-card-label">آمادگی پیگیری</span>
+                <LeadReadinessBadge lead={lead} />
+              </div>
+              <div className="lead-card-row">
+                <span className="lead-card-label">اقدام پیشنهادی</span>
+                <LeadNextActionBadge lead={lead} />
               </div>
               <div className="lead-card-row">
                 <span className="lead-card-label">پیگیری بعدی</span>

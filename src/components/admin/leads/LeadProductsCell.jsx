@@ -5,13 +5,15 @@ export default function LeadProductsCell({ products, needNote }) {
   return (
     <div className="lead-product-lines">
       {shown.map((p) => (
-        <span key={p.id}>
+        <span key={p.id} className="lead-cell-clamp" title={`${p.code} ${p.name_fa}`}>
           {p.code} {p.name_fa}
         </span>
       ))}
       {extra > 0 && <span className="lead-product-more">+{extra} محصول</span>}
       {needNote && (!products || products.length === 0) && (
-        <span className="lead-need-note-line">{needNote}</span>
+        <span className="lead-need-note-line lead-cell-clamp" title={needNote}>
+          {needNote}
+        </span>
       )}
     </div>
   )

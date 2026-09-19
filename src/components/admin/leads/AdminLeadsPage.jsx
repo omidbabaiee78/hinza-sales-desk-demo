@@ -12,11 +12,15 @@ import {
   leadSourceLabel,
   leadStatusLabel,
 } from '../../../utils/leadStatus'
+import { LEAD_SMART_SEGMENTS, computeDuplicateRiskLeadIds, smartSortCompare } from '../../../utils/leadIntelligence'
 import ErrorBanner from '../../common/ErrorBanner'
 import LeadsListView from './LeadsListView'
 import LeadPipelineView from './LeadPipelineView'
 import LeadFormModal from './LeadFormModal'
 import LeadActivityFormModal from './LeadActivityFormModal'
+import LeadImportModal from './LeadImportModal'
+import LeadBulkActionsBar from './LeadBulkActionsBar'
+import LeadBulkActionsModal from './LeadBulkActionsModal'
 import '../../common/DataTable.css'
 import './Leads.css'
 
@@ -44,14 +48,22 @@ export default function AdminLeadsPage({ onOpenLead }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [cityFilter, setCityFilter] = useState('')
+  const [industryFilter, setIndustryFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [assignedFilter, setAssignedFilter] = useState('')
   const [followUpFilter, setFollowUpFilter] = useState('')
+  const [segmentFilter, setSegmentFilter] = useState('')
+  const [sortMode, setSortMode] = useState('smart')
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [quickFollowUpLeadId, setQuickFollowUpLeadId] = useState(null)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [bulkAction, setBulkAction] = useState(null)
 
   const cities = useMemo(() => [...new Set(leads.map((l) => l.city).filter(Boolean))].sort(), [leads])
+  const industries = useMemo(() => [...new Set(leads.map((l) => l.industry).filter(Boolean))].sort(), [leads])
+  const duplicateRiskIds = useMemo(() => computeDuplicateRiskLeadIds(leads), [leads])
 
   const summary = useMemo(() => {
     const active = leads.filter((l) => l.status !== 'converted' && l.status !== 'lost')
@@ -66,15 +78,18 @@ export default function AdminLeadsPage({ onOpenLead }) {
 
   const filteredLeads = useMemo(() => {
     const query = search.trim().toLowerCase()
-    return leads.filter((lead) => {
+    const segment = LEAD_SMART_SEGMENTS.find((s) => s.key === segmentFilter)
+    const filtered = leads.filter((lead) => {
       if (statusFilter && lead.status !== statusFilter) return false
       if (cityFilter && lead.city !== cityFilter) return false
+      if (industryFilter && lead.industry !== industryFilter) return false
       if (sourceFilter && lead.source !== sourceFilter) return false
       if (priorityFilter && lead.priority !== priorityFilter) return false
       if (assignedFilter && lead.assigned_to !== assignedFilter) return false
       if (followUpFilter && followUpState(lead.next_follow_up_at) !== followUpFilter) return false
+      if (segment && !segment.test(lead, { duplicateRiskIds })) return false
       if (query) {
-        const text = [lead.company_name, lead.contact_name, lead.mobile, lead.phone, lead.city]
+        const text = [lead.company_name, lead.contact_name, lead.mobile, lead.phone, lead.email, lead.website, lead.city, lead.industry, ...(lead.tags || [])]
           .filter(Boolean)
           .join(' ')
           .toLowerCase()
@@ -86,12 +101,60 @@ export default function AdminLeadsPage({ onOpenLead }) {
       }
       return true
     })
-  }, [leads, search, statusFilter, cityFilter, sourceFilter, priorityFilter, assignedFilter, followUpFilter])
+    if (sortMode === 'smart') {
+      return [...filtered].sort(smartSortCompare)
+    }
+    return filtered
+  }, [
+    leads,
+    search,
+    statusFilter,
+    cityFilter,
+    industryFilter,
+    sourceFilter,
+    priorityFilter,
+    assignedFilter,
+    followUpFilter,
+    segmentFilter,
+    sortMode,
+    duplicateRiskIds,
+  ])
+
+  function toggleSelect(leadId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(leadId)) next.delete(leadId)
+      else next.add(leadId)
+      return next
+    })
+  }
+
+  function toggleSelectAll(checked) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (checked) filteredLeads.forEach((l) => next.add(l.id))
+      else filteredLeads.forEach((l) => next.delete(l.id))
+      return next
+    })
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+  }
+
+  function handleBulkActionDone() {
+    setBulkAction(null)
+    clearSelection()
+    refresh()
+  }
 
   return (
     <div>
       <div className="page-toolbar">
-        <h2>سرنخ‌های فروش</h2>
+        <div>
+          <h2>سرنخ‌های فروش</h2>
+          <p className="lead-page-subtitle">بانک مشتریان بالقوه Hinza Polymer</p>
+        </div>
         <div className="crm-view-tabs">
           <button type="button" className={`crm-view-tab${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')}>
             لیست
@@ -106,6 +169,9 @@ export default function AdminLeadsPage({ onOpenLead }) {
         </div>
         <button type="button" className="btn-primary" onClick={() => setShowCreateModal(true)}>
           + افزودن سرنخ
+        </button>
+        <button type="button" className="btn-primary" onClick={() => setShowImportModal(true)}>
+          افزودن گروهی از Excel
         </button>
         <button type="button" className="btn-secondary" onClick={refresh}>
           به‌روزرسانی
@@ -139,11 +205,24 @@ export default function AdminLeadsPage({ onOpenLead }) {
 
       {view === 'list' && (
         <>
+          <div className="lead-smart-segments">
+            {LEAD_SMART_SEGMENTS.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                className={`lead-segment-chip${segmentFilter === s.key ? ' active' : ''}`}
+                onClick={() => setSegmentFilter((prev) => (prev === s.key ? '' : s.key))}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+
           <div className="orders-filters">
             <input
               type="text"
               className="search-input"
-              placeholder="جستجو بر اساس شرکت، شخص تماس، موبایل، تلفن، شهر یا محصول..."
+              placeholder="جستجو بر اساس شرکت، شخص تماس، موبایل، تلفن، ایمیل، وب‌سایت، شهر، صنعت، تگ یا محصول..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -160,6 +239,14 @@ export default function AdminLeadsPage({ onOpenLead }) {
               {cities.map((city) => (
                 <option key={city} value={city}>
                   {city}
+                </option>
+              ))}
+            </select>
+            <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
+              <option value="">همه صنایع</option>
+              {industries.map((industry) => (
+                <option key={industry} value={industry}>
+                  {industry}
                 </option>
               ))}
             </select>
@@ -196,13 +283,26 @@ export default function AdminLeadsPage({ onOpenLead }) {
                 ))}
               </select>
             )}
+            <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
+              <option value="smart">مرتب‌سازی: هوشمند</option>
+              <option value="default">مرتب‌سازی: جدیدترین</option>
+            </select>
           </div>
+
+          <LeadBulkActionsBar
+            selectedCount={selectedIds.size}
+            onAction={setBulkAction}
+            onClearSelection={clearSelection}
+          />
 
           <LeadsListView
             leads={filteredLeads}
             loading={loading}
             onOpenLead={onOpenLead}
             onQuickFollowUp={setQuickFollowUpLeadId}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onToggleSelectAll={toggleSelectAll}
           />
         </>
       )}
@@ -222,6 +322,16 @@ export default function AdminLeadsPage({ onOpenLead }) {
         />
       )}
 
+      {showImportModal && (
+        <LeadImportModal
+          onClose={() => setShowImportModal(false)}
+          onImported={() => {
+            setShowImportModal(false)
+            refresh()
+          }}
+        />
+      )}
+
       {quickFollowUpLeadId && (
         <LeadActivityFormModal
           leadId={quickFollowUpLeadId}
@@ -231,6 +341,15 @@ export default function AdminLeadsPage({ onOpenLead }) {
             refresh()
           }}
           onCancel={() => setQuickFollowUpLeadId(null)}
+        />
+      )}
+
+      {bulkAction && (
+        <LeadBulkActionsModal
+          action={bulkAction}
+          leadIds={[...selectedIds]}
+          onDone={handleBulkActionDone}
+          onCancel={() => setBulkAction(null)}
         />
       )}
     </div>
