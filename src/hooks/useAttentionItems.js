@@ -9,8 +9,8 @@ function translateDbError(message) {
   return 'خطا در دریافت موارد نیازمند توجه. لطفاً دوباره تلاش کنید.'
 }
 
-const ACTIONABLE_ORDER_STATUSES = ['pending_review', 'quoted', 'customer_approved']
-const OVERDUE_INVOICE_STATUSES = ['issued', 'partially_paid']
+export const ACTIONABLE_ORDER_STATUSES = ['pending_review', 'quoted', 'customer_approved']
+export const OVERDUE_INVOICE_STATUSES = ['issued', 'partially_paid']
 
 // Which group/reason an actionable order status maps to. quoted orders are
 // waiting on the customer, not the admin, so they get their own group.

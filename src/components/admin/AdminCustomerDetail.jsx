@@ -6,16 +6,34 @@ import { useCompanyPayments } from '../../hooks/useCompanyPayments'
 import { useActiveProducts } from '../../hooks/useActiveProducts'
 import { usePricingSuggestion } from '../../hooks/usePricingSuggestion'
 import { usePricingSettings } from '../../hooks/usePricingSettings'
+import { useOrderEvents } from '../../hooks/useOrderEvents'
+import { useCrmCommunications } from '../../hooks/useCrmCommunications'
+import { useCompanySnoozes } from '../../hooks/useCompanySnoozes'
 import { formatJalaliDate, formatKg, formatRial } from '../../utils/formatters'
 import { formatBalanceLine } from '../../utils/balance'
-import { isInvoiceOpen } from '../../utils/invoice'
+import { isInvoiceOpen, calcInvoicePaid, calcInvoiceRemaining } from '../../utils/invoice'
 import { invoicesUntilNextTier } from '../../utils/pricing'
+import { OVERDUE_INVOICE_STATUSES } from '../../hooks/useAttentionItems'
+import {
+  computeCustomerAttention,
+  daysBetween,
+  deriveNextAction,
+  dbReasonForAttentionKey,
+  reasonContext,
+  snoozeSignature,
+} from '../../utils/crmRules'
+import { buildProductIntelligence } from '../../utils/productIntelligence'
 import StatusBadge from '../orders/StatusBadge'
 import InvoiceStatusBadge from '../invoices/InvoiceStatusBadge'
 import PaymentsList from '../invoices/PaymentsList'
 import CompanySpecialPrices from './CompanySpecialPrices'
 import ErrorBanner from '../common/ErrorBanner'
 import LoadingScreen from '../common/LoadingScreen'
+import CrmQuickActions from '../crm/CrmQuickActions'
+import CrmSnoozeButton from '../crm/CrmSnoozeButton'
+import CrmProductIntelligence from '../crm/CrmProductIntelligence'
+import CrmCommunicationHistory from '../crm/CrmCommunicationHistory'
+import '../crm/Crm.css'
 import '../orders/OrderDetail.css'
 import '../common/DashboardCards.css'
 import '../common/DataTable.css'
@@ -33,6 +51,19 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
   )
   const { settings: pricingSettings } = usePricingSettings()
 
+  // The one order currently in 'quoted' status (if any) needs its actual
+  // "became quoted" timestamp for the 2-day follow-up escalation, not just
+  // its creation date - order_events already tracks that per order.
+  const quotedOrderForEvents = orders.find((order) => order.status === 'quoted') || null
+  const { events: quotedOrderEvents } = useOrderEvents(quotedOrderForEvents?.id || null)
+  const {
+    communications,
+    loading: communicationsLoading,
+    error: communicationsError,
+    schemaMissing: communicationsSchemaMissing,
+  } = useCrmCommunications(companyId)
+  const { snoozes, refresh: refreshSnoozes } = useCompanySnoozes(companyId)
+
   if (loading) return <LoadingScreen text="در حال بارگذاری مشتری..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
   if (!company) return null
@@ -40,6 +71,64 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
   const purchaseHistory = orders.filter((order) => order.status === 'delivered')
   const openInvoicesCount = invoices.filter((invoice) => isInvoiceOpen(invoice.status)).length
   const lastPurchaseAt = purchaseHistory[0]?.created_at || null
+  const daysSincePurchase = daysBetween(lastPurchaseAt)
+
+  // ---- CRM: this customer's own automatic attention reasons ----
+  const hasEverOrdered = orders.length > 0
+  const approvedOrder = orders.find((order) => order.status === 'customer_approved') || null
+  const quotedSinceIso =
+    quotedOrderEvents.find((event) => event.event_type === 'quoted')?.created_at ||
+    quotedOrderForEvents?.created_at ||
+    null
+  const quotedSinceDays = quotedOrderForEvents ? daysBetween(quotedSinceIso) : null
+
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const overdueInvoiceRaw =
+    invoices
+      .filter(
+        (invoice) =>
+          OVERDUE_INVOICE_STATUSES.includes(invoice.status) &&
+          invoice.due_date &&
+          invoice.due_date < todayIso,
+      )
+      .sort((a, b) => (a.due_date < b.due_date ? -1 : 1))[0] || null
+  const overdueInvoice = overdueInvoiceRaw
+    ? {
+        ...overdueInvoiceRaw,
+        remainingRial: calcInvoiceRemaining(
+          overdueInvoiceRaw.total_rial,
+          calcInvoicePaid(payments.filter((p) => p.invoice_id === overdueInvoiceRaw.id)),
+        ),
+      }
+    : null
+
+  const nowIso = new Date().toISOString()
+  const activeSnoozeSignatures = new Set(
+    snoozes
+      .filter((snooze) => snooze.snooze_until > nowIso)
+      .map((snooze) => snoozeSignature(snooze.reason_key, snooze.order_id, snooze.invoice_id)),
+  )
+  const attentionReasons = computeCustomerAttention({
+    overdueInvoice,
+    approvedOrder,
+    quotedOrder: quotedOrderForEvents,
+    quotedSinceDays,
+    daysSincePurchase,
+    hasEverOrdered,
+    representativeCreatedAt: representative?.created_at || null,
+    lastDeliveredOrder: purchaseHistory[0] || null,
+  }).filter((reason) => {
+    const { orderId, invoiceId } = reasonContext(reason)
+    return !activeSnoozeSignatures.has(snoozeSignature(reason.key, orderId, invoiceId))
+  })
+  const topReason = attentionReasons[0] || null
+  const nextAction = deriveNextAction(attentionReasons)
+
+  const customerProducts = buildProductIntelligence(
+    purchaseHistory.flatMap((order) =>
+      (order.order_items || []).map((item) => ({ ...item, order_created_at: order.created_at })),
+    ),
+  )
 
   const isLoyal = loyaltyInfo ? Number(loyaltyInfo.auto_discount_percent) > 0 : false
   const nextTierIn =
@@ -79,6 +168,52 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
         </button>
         <h2>{company.name}</h2>
       </div>
+
+      <section className="order-detail-card crm-profile-summary">
+        <div className="crm-profile-summary-row">
+          <div>
+            <h3 style={{ margin: 0 }}>وضعیت CRM</h3>
+            <p className="crm-next-action">
+              اقدام بعدی: <strong>{nextAction}</strong>
+              {isLoyal && <span className="crm-loyal-badge">مشتری وفادار</span>}
+            </p>
+          </div>
+          <CrmQuickActions
+            companyId={companyId}
+            phone={representative?.phone}
+            customerName={representative?.full_name || company.name}
+            templateKey={topReason ? dbReasonForAttentionKey(topReason.key) : 'general'}
+            templateVars={topReason?.meta || {}}
+            relatedOrderId={reasonContext(topReason).orderId}
+            relatedInvoiceId={reasonContext(topReason).invoiceId}
+            onOpenOrder={onOpenOrder}
+            onOpenInvoice={onOpenInvoice}
+          />
+        </div>
+
+        {attentionReasons.length === 0 ? (
+          <p className="profile-empty">فعلاً موردی نیاز به پیگیری برای این مشتری وجود ندارد.</p>
+        ) : (
+          <ul className="crm-reason-list">
+            {attentionReasons.map((reason) => {
+              const { orderId, invoiceId } = reasonContext(reason)
+              return (
+                <li key={reason.key}>
+                  <span className="crm-reason-label">{reason.label}</span>
+                  <span className="crm-reason-detail">{reason.detail}</span>
+                  <CrmSnoozeButton
+                    companyId={companyId}
+                    reasonKey={reason.key}
+                    orderId={orderId}
+                    invoiceId={invoiceId}
+                    onDone={refreshSnoozes}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
 
       <div className="order-detail-grid">
         <section className="order-detail-card">
@@ -174,6 +309,17 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
       </div>
 
       <CompanySpecialPrices companyId={companyId} />
+
+      <h3>محصولات مشتری</h3>
+      <CrmProductIntelligence products={customerProducts} />
+
+      <h3>تاریخچه ارتباط</h3>
+      <CrmCommunicationHistory
+        communications={communications}
+        loading={communicationsLoading}
+        error={communicationsError}
+        schemaMissing={communicationsSchemaMissing}
+      />
 
       <h3>سابقه خرید</h3>
       <div className="table-wrapper">

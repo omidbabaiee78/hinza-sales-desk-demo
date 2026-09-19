@@ -12,7 +12,9 @@ function translateDbError(message) {
 function fetchOrders(companyId) {
   return supabase
     .from('orders')
-    .select('*, order_items(quantity_kg, products(name_fa))')
+    .select(
+      '*, order_items(product_id, quantity_kg, unit_price_rial, discount_percent, products(code, name_fa))',
+    )
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
 }
