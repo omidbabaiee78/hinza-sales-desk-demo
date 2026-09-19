@@ -6,6 +6,7 @@ import { formatBalanceLine } from '../../utils/balance'
 import { formatJalaliDate, formatQuantity } from '../../utils/formatters'
 import CrmQuickActions from '../crm/CrmQuickActions'
 import CrmSnoozeButton from '../crm/CrmSnoozeButton'
+import SmartSuggestionsPanel from '../crm/SmartSuggestionsPanel'
 import ErrorBanner from '../common/ErrorBanner'
 import '../crm/Crm.css'
 import '../common/DataTable.css'
@@ -92,6 +93,7 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
   const { rows, loading, error, crmSchemaReady, refresh } = useCrmCustomers()
   const { products } = useActiveProducts()
 
+  const [view, setView] = useState('list')
   const [chip, setChip] = useState('all')
   const [search, setSearch] = useState('')
   const [productFilter, setProductFilter] = useState('')
@@ -152,11 +154,33 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
     <div>
       <div className="page-toolbar">
         <h2>CRM</h2>
-        <button type="button" className="btn-secondary" onClick={refresh}>
-          به‌روزرسانی
-        </button>
+        <div className="crm-view-tabs">
+          <button
+            type="button"
+            className={`crm-view-tab${view === 'list' ? ' active' : ''}`}
+            onClick={() => setView('list')}
+          >
+            لیست مشتریان
+          </button>
+          <button
+            type="button"
+            className={`crm-view-tab${view === 'suggestions' ? ' active' : ''}`}
+            onClick={() => setView('suggestions')}
+          >
+            پیشنهادهای هوشمند
+          </button>
+        </div>
+        {view === 'list' && (
+          <button type="button" className="btn-secondary" onClick={refresh}>
+            به‌روزرسانی
+          </button>
+        )}
       </div>
 
+      {view === 'suggestions' ? (
+        <SmartSuggestionsPanel onOpenCustomer={onOpenCustomer} />
+      ) : (
+        <>
       <ErrorBanner message={error} onRetry={refresh} />
       {!crmSchemaReady && (
         <div className="crm-schema-notice">
@@ -400,6 +424,8 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
             )
           })}
       </div>
+        </>
+      )}
     </div>
   )
 }

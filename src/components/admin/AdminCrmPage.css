@@ -1,3 +1,25 @@
+.crm-view-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.crm-view-tab {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.crm-view-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 .crm-schema-notice {
   padding: 10px 14px;
   border-radius: 8px;
