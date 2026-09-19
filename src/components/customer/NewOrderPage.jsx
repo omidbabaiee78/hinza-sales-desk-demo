@@ -6,8 +6,8 @@ import { todayJalaali, jalaaliToGregorianIso } from '../../utils/jalali'
 import { formatJalaliDate } from '../../utils/formatters'
 import './NewOrderPage.css'
 
-function emptyItem() {
-  return { key: crypto.randomUUID(), productId: '', quantityKg: '', note: '' }
+function emptyItem(productId = '') {
+  return { key: crypto.randomUUID(), productId, quantityKg: '', note: '' }
 }
 
 function todayIso() {
@@ -15,12 +15,15 @@ function todayIso() {
   return jalaaliToGregorianIso(jy, jm, jd)
 }
 
-export default function NewOrderPage({ onCreated }) {
+// initialProductId lets "درخواست قیمت" on a product card/detail page open
+// this form with that product already selected in the first row - it only
+// affects the very first render, never fights the customer's own edits.
+export default function NewOrderPage({ onCreated, initialProductId }) {
   const { products, loading: productsLoading, error: productsError } =
     useActiveProducts()
   const { createOrder, submitting } = useCreateOrder()
 
-  const [items, setItems] = useState([emptyItem()])
+  const [items, setItems] = useState(() => [emptyItem(initialProductId)])
   const [customerNote, setCustomerNote] = useState('')
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')

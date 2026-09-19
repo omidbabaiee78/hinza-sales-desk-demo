@@ -1,0 +1,17 @@
+.product-image-uploader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.product-image-uploader .product-image {
+  width: 140px;
+  aspect-ratio: 4 / 3;
+}
+
+.product-image-uploader-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}

@@ -6,6 +6,8 @@ import QuickContact from '../common/QuickContact'
 import CustomerDashboard from './CustomerDashboard'
 import CompanyProfile from './CompanyProfile'
 import NewOrderPage from './NewOrderPage'
+import CustomerProductsPage from './CustomerProductsPage'
+import CustomerProductDetail from './CustomerProductDetail'
 import CustomerOrdersPage from './CustomerOrdersPage'
 import CustomerOrderDetail from './CustomerOrderDetail'
 import CustomerInvoicesPage from './CustomerInvoicesPage'
@@ -14,6 +16,7 @@ import AccountPage from './AccountPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
+  { key: 'products', label: 'محصولات' },
   { key: 'newOrder', label: 'ثبت سفارش' },
   { key: 'orders', label: 'سفارش‌ها' },
   { key: 'invoices', label: 'فاکتورها' },
@@ -26,6 +29,8 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
   const [activeKey, setActiveKey] = useState('dashboard')
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
+  const [selectedProductId, setSelectedProductId] = useState(null)
+  const [requestedProductId, setRequestedProductId] = useState(null)
 
   function navigate(key) {
     if (key === 'contact') {
@@ -35,6 +40,8 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
     setActiveKey(key)
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
+    setSelectedProductId(null)
+    if (key !== 'newOrder') setRequestedProductId(null)
   }
 
   function openOrder(orderId) {
@@ -47,6 +54,21 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
     setActiveKey('invoices')
     setSelectedOrderId(null)
     setSelectedInvoiceId(invoiceId)
+  }
+
+  function openProduct(productId) {
+    setActiveKey('products')
+    setSelectedProductId(productId)
+  }
+
+  // "درخواست قیمت" IS placing an order in this system (an order always
+  // starts as a price request the admin then quotes), so it goes straight
+  // to the order form with the product pre-selected rather than a separate
+  // quote-only flow.
+  function requestPrice(productId) {
+    setRequestedProductId(productId)
+    setActiveKey('newOrder')
+    setSelectedProductId(null)
   }
 
   return (
@@ -70,8 +92,19 @@ export default function CustomerApp({ profile, company, onSignOut, onOpenContact
           onOpenOrder={openOrder}
         />
       )}
+      {activeKey === 'products' &&
+        (selectedProductId ? (
+          <CustomerProductDetail
+            productId={selectedProductId}
+            onBack={() => setSelectedProductId(null)}
+            onRequestPrice={requestPrice}
+          />
+        ) : (
+          <CustomerProductsPage onOpenProduct={openProduct} onRequestPrice={requestPrice} />
+        ))}
       {activeKey === 'newOrder' && (
         <NewOrderPage
+          initialProductId={requestedProductId}
           onCreated={(orderId) => {
             setActiveKey('orders')
             setSelectedOrderId(orderId)

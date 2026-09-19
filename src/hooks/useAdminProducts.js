@@ -10,6 +10,34 @@ function translateDbError(message) {
   return 'خطا در ذخیره اطلاعات محصول. لطفاً دوباره تلاش کنید.'
 }
 
+function buildProductPayload({
+  code,
+  name_fa,
+  category,
+  description_fa,
+  active,
+  polymer_base,
+  applications,
+  packaging,
+  availability,
+  image_path,
+  mini_specs,
+}) {
+  return {
+    code,
+    name_fa,
+    category: category || null,
+    description_fa: description_fa || null,
+    active: active !== false,
+    polymer_base: polymer_base || null,
+    applications: applications || [],
+    packaging: packaging || null,
+    availability: availability || 'available',
+    image_path: image_path || null,
+    mini_specs: mini_specs || [],
+  }
+}
+
 function fetchProducts() {
   return supabase.from('products').select('*').order('created_at', { ascending: false })
 }
@@ -42,27 +70,16 @@ export function useAdminProducts() {
     setReloadToken((token) => token + 1)
   }
 
-  async function createProduct({ code, name_fa, category, description_fa }) {
-    const { error } = await supabase.from('products').insert({
-      code,
-      name_fa,
-      category: category || null,
-      description_fa: description_fa || null,
-      active: true,
-    })
+  async function createProduct(form) {
+    const { error } = await supabase.from('products').insert(buildProductPayload(form))
     if (error) throw new Error(translateDbError(error.message))
     refresh()
   }
 
-  async function updateProduct(id, { code, name_fa, category, description_fa }) {
+  async function updateProduct(id, form) {
     const { error } = await supabase
       .from('products')
-      .update({
-        code,
-        name_fa,
-        category: category || null,
-        description_fa: description_fa || null,
-      })
+      .update(buildProductPayload(form))
       .eq('id', id)
     if (error) throw new Error(translateDbError(error.message))
     refresh()
@@ -77,6 +94,33 @@ export function useAdminProducts() {
     refresh()
   }
 
+  // Historical orders must keep showing what was actually ordered, so a
+  // referenced product is never hard-deleted - deactivating/hiding it is
+  // the only supported path once it has real order history.
+  async function deleteProduct(id) {
+    const { count, error: countError } = await supabase
+      .from('order_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', id)
+    if (countError) throw new Error(translateDbError(countError.message))
+    if (count > 0) {
+      throw new Error(
+        'این محصول در سفارش‌های قبلی استفاده شده و برای حفظ سوابق قابل حذف کامل نیست. به‌جای آن می‌توانید آن را غیرفعال کنید.',
+      )
+    }
+
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) {
+      if (error.message?.includes('foreign key')) {
+        throw new Error(
+          'این محصول در سفارش‌های قبلی استفاده شده و برای حفظ سوابق قابل حذف کامل نیست. به‌جای آن می‌توانید آن را غیرفعال کنید.',
+        )
+      }
+      throw new Error(translateDbError(error.message))
+    }
+    refresh()
+  }
+
   return {
     products,
     loading,
@@ -85,5 +129,6 @@ export function useAdminProducts() {
     createProduct,
     updateProduct,
     setProductActive,
+    deleteProduct,
   }
 }

@@ -1,0 +1,27 @@
+.product-search-input {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  padding: 13px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-h);
+  margin-bottom: 12px;
+}
+
+.product-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.product-filters select {
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-h);
+}

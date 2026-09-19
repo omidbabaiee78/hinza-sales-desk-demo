@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAdminProducts } from '../../hooks/useAdminProducts'
+import { removeProductImage } from '../../services/productImages'
 import ErrorBanner from '../common/ErrorBanner'
 import ProductForm from './ProductForm'
 import '../common/DataTable.css'
@@ -13,11 +14,14 @@ export default function ProductsPage() {
     createProduct,
     updateProduct,
     setProductActive,
+    deleteProduct,
   } = useAdminProducts()
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
   const [toggleError, setToggleError] = useState('')
   const [togglingId, setTogglingId] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
 
   async function handleAddSave(form) {
     await createProduct(form)
@@ -41,6 +45,20 @@ export default function ProductsPage() {
     }
   }
 
+  async function handleDelete(product) {
+    if (!window.confirm(`محصول «${product.name_fa}» برای همیشه حذف شود؟`)) return
+    setDeleteError('')
+    setDeletingId(product.id)
+    try {
+      await deleteProduct(product.id)
+      if (product.image_path) removeProductImage(product.image_path)
+    } catch (err) {
+      setDeleteError(err.message || 'حذف محصول با خطا مواجه شد.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div>
       <div className="page-toolbar">
@@ -52,6 +70,7 @@ export default function ProductsPage() {
 
       <ErrorBanner message={error} onRetry={refresh} />
       <ErrorBanner message={toggleError} />
+      <ErrorBanner message={deleteError} />
 
       <div className="table-wrapper">
         <table>
@@ -104,6 +123,14 @@ export default function ProductsPage() {
                         : product.active
                           ? 'غیرفعال کردن'
                           : 'فعال کردن'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-link btn-link-danger"
+                      onClick={() => handleDelete(product)}
+                      disabled={deletingId === product.id}
+                    >
+                      {deletingId === product.id ? 'در حال حذف...' : 'حذف محصول'}
                     </button>
                   </td>
                 </tr>

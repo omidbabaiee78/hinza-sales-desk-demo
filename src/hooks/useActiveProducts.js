@@ -12,7 +12,9 @@ function translateDbError(message) {
 function fetchActiveProducts() {
   return supabase
     .from('products')
-    .select('id, code, name_fa, category')
+    .select(
+      'id, code, name_fa, category, description_fa, active, polymer_base, applications, packaging, availability, image_path, mini_specs',
+    )
     .eq('active', true)
     .order('name_fa', { ascending: true })
 }

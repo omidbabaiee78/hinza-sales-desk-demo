@@ -20,6 +20,10 @@
   box-shadow: var(--shadow-lg);
 }
 
+.modal-panel-wide {
+  max-width: 640px;
+}
+
 .modal-panel h2 {
   margin: 0 0 20px;
   font-size: 18px;
@@ -40,7 +44,13 @@
   color: var(--text-muted);
 }
 
-.modal-panel input,
+.modal-panel label.product-form-availability {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-panel input:not([type='checkbox']),
 .modal-panel select,
 .modal-panel textarea {
   font: inherit;
@@ -49,6 +59,11 @@
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
+}
+
+.modal-panel input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
 }
 
 .modal-panel textarea {
