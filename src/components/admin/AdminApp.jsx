@@ -16,9 +16,11 @@ import AdminCrmPage from './AdminCrmPage'
 import AdminReportsPage from './reports/AdminReportsPage'
 import AdminLeadsPage from './leads/AdminLeadsPage'
 import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
+import AdminTodayPage from './today/AdminTodayPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
+  { key: 'today', label: 'امروز' },
   { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
   { key: 'customers', label: 'مشتریان' },
   { key: 'crm', label: 'CRM' },
@@ -95,6 +97,15 @@ export default function AdminApp({ profile, onSignOut }) {
         <AdminDashboard
           onNavigate={navigate}
           onOpenOrder={openOrder}
+          onOpenCustomer={openCustomer}
+        />
+      )}
+      {activeKey === 'today' && (
+        <AdminTodayPage
+          onNavigate={navigate}
+          onOpenLead={openLead}
+          onOpenOrder={openOrder}
+          onOpenInvoice={openInvoice}
           onOpenCustomer={openCustomer}
         />
       )}

@@ -1,0 +1,272 @@
+/* ---------- header ---------- */
+
+.today-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.today-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.today-chip:hover {
+  background: var(--surface-hover);
+}
+
+.today-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ---------- summary cards ---------- */
+
+.today-summary-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.today-summary-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 140px;
+  padding: 12px 16px;
+  border-radius: var(--radius-card, 10px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-family: inherit;
+  text-align: right;
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast, 160ms ease), border-color var(--transition-fast, 160ms ease);
+}
+
+.today-summary-card:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-card-hover, var(--shadow-sm));
+}
+
+.today-summary-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-h);
+  line-height: 1;
+}
+
+.today-summary-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.today-summary-card.tone-lost .today-summary-value { color: var(--status-lost-text); }
+.today-summary-card.tone-offer .today-summary-value { color: var(--status-offer-text); }
+.today-summary-card.tone-contacted .today-summary-value { color: var(--status-contacted-text); }
+.today-summary-card.tone-won .today-summary-value { color: var(--status-won-text); }
+
+/* ---------- filters ---------- */
+
+.today-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.today-filter-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- sections ---------- */
+
+.today-section {
+  margin-bottom: 28px;
+}
+
+.today-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.today-section-count {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Secondary grouped sections read smaller/quieter than the master queue -
+   they're a by-category re-view of the same items, not the main feature. */
+.today-section-compact h3 {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.today-section-compact .today-card {
+  padding: 10px 14px;
+}
+
+.today-empty-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 10px);
+  padding: 24px;
+  text-align: center;
+}
+
+.today-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h);
+  margin: 0 0 6px;
+}
+
+/* ---------- item list / cards ---------- */
+
+.today-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.today-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 10px);
+  box-shadow: var(--shadow-card, var(--shadow-sm));
+  padding: 4px 16px;
+}
+
+.today-card-group {
+  padding: 12px 16px;
+}
+
+.today-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.today-group-company {
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.today-group-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.today-item-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.today-card-group .today-item-row {
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.today-card-group .today-item-row:last-child {
+  border-bottom: none;
+}
+
+.today-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.today-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.today-item-who {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.today-item-context {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.today-item-reason {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.today-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.today-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 260px;
+  justify-content: flex-end;
+}
+
+.today-priority-dot {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.today-priority-dot.tone-lost { background: var(--status-lost-bg); color: var(--status-lost-text); }
+.today-priority-dot.tone-offer { background: var(--status-offer-bg); color: var(--status-offer-text); }
+.today-priority-dot.tone-contacted { background: var(--status-contacted-bg); color: var(--status-contacted-text); }
+
+/* ---------- mobile ---------- */
+
+@media (max-width: 720px) {
+  .today-item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .today-item-actions {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .today-summary-card {
+    min-width: calc(50% - 5px);
+  }
+}
