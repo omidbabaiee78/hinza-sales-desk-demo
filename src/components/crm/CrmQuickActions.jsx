@@ -21,6 +21,9 @@ export default function CrmQuickActions({
   onOpenOrder,
   onOpenInvoice,
   onOpenCustomer,
+  viewLabel = 'مشاهده مشتری',
+  showRelatedLinks = true,
+  compact = false,
 }) {
   const [activeModal, setActiveModal] = useState(null) // 'whatsapp' | 'sms' | null
   const intlPhone = phone ? toE164Iran(phone).replace('+', '') : ''
@@ -77,7 +80,10 @@ export default function CrmQuickActions({
   }
 
   return (
-    <div className="crm-quick-actions">
+    <div
+      className={`crm-quick-actions${compact ? ' crm-quick-actions-compact' : ''}`}
+      onClick={(e) => e.stopPropagation()}
+    >
       {phone && (
         <a className="btn-link" href={telHref(phone)} onClick={handleCallClick}>
           تماس
@@ -95,15 +101,15 @@ export default function CrmQuickActions({
       )}
       {onOpenCustomer && (
         <button type="button" className="btn-link" onClick={() => onOpenCustomer(companyId)}>
-          مشاهده مشتری
+          {viewLabel}
         </button>
       )}
-      {relatedOrderId && onOpenOrder && (
+      {showRelatedLinks && relatedOrderId && onOpenOrder && (
         <button type="button" className="btn-link" onClick={() => onOpenOrder(relatedOrderId)}>
           مشاهده سفارش
         </button>
       )}
-      {relatedInvoiceId && onOpenInvoice && (
+      {showRelatedLinks && relatedInvoiceId && onOpenInvoice && (
         <button type="button" className="btn-link" onClick={() => onOpenInvoice(relatedInvoiceId)}>
           مشاهده فاکتور
         </button>

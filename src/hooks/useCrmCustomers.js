@@ -42,12 +42,15 @@ function fetchOrders() {
   return supabase.from('orders').select('id, order_number, company_id, status, created_at')
 }
 
-function fetchDeliveredOrderItems(deliveredOrderIds) {
-  if (deliveredOrderIds.length === 0) return Promise.resolve({ data: [] })
+// Covers both product-intelligence (delivered orders) and the product names
+// shown in CRM message templates (quoted orders) in one bulk query, keyed by
+// order_id - never a per-order/per-item fetch.
+function fetchOrderItems(orderIds) {
+  if (orderIds.length === 0) return Promise.resolve({ data: [] })
   return supabase
     .from('order_items')
     .select('order_id, product_id, quantity_kg, unit_price_rial, discount_percent, products(code, name_fa)')
-    .in('order_id', deliveredOrderIds)
+    .in('order_id', orderIds)
 }
 
 // Same "currently quoted, waiting on the customer" definition as Phase 7,
@@ -166,11 +169,18 @@ export function useCrmCustomers() {
       const quotedOrderIds = orders.filter((o) => o.status === 'quoted').map((o) => o.id)
 
       const [itemsRes, quotedSinceRes, overduePaymentsRes] = await Promise.all([
-        fetchDeliveredOrderItems(deliveredOrderIds),
+        fetchOrderItems([...deliveredOrderIds, ...quotedOrderIds]),
         fetchQuotedSince(quotedOrderIds),
         fetchPaymentsForInvoices((overdueInvoicesRes.data || []).map((inv) => inv.id)),
       ])
       if (ignore) return
+
+      const itemsByOrderId = new Map()
+      for (const item of itemsRes.data || []) {
+        const list = itemsByOrderId.get(item.order_id) || []
+        list.push(item)
+        itemsByOrderId.set(item.order_id, list)
+      }
 
       // ---- lookup maps ----
       const profilesById = new Map((profiles || []).map((p) => [p.id, p]))
@@ -188,13 +198,12 @@ export function useCrmCustomers() {
         ordersByCompany.set(order.company_id, list)
       }
 
-      const deliveredOrderById = new Map(deliveredOrders.map((o) => [o.id, o]))
       const itemsByCompany = new Map()
-      for (const item of itemsRes.data || []) {
-        const order = deliveredOrderById.get(item.order_id)
-        if (!order) continue
+      for (const order of deliveredOrders) {
+        const orderItems = itemsByOrderId.get(order.id) || []
+        if (orderItems.length === 0) continue
         const list = itemsByCompany.get(order.company_id) || []
-        list.push({ ...item, order_created_at: order.created_at })
+        for (const item of orderItems) list.push({ ...item, order_created_at: order.created_at })
         itemsByCompany.set(order.company_id, list)
       }
 
@@ -253,19 +262,28 @@ export function useCrmCustomers() {
         const hasEverOrdered = companyOrders.length > 0
 
         const companyDeliveredOrders = companyOrders.filter((o) => o.status === 'delivered')
-        const lastDeliveredOrder = latestByDate(companyDeliveredOrders, 'created_at')
-        const lastPurchaseAt = lastDeliveredOrder?.created_at || null
+        const lastDeliveredOrderRaw = latestByDate(companyDeliveredOrders, 'created_at')
+        const lastPurchaseAt = lastDeliveredOrderRaw?.created_at || null
         const daysSincePurchase = daysBetween(lastPurchaseAt, now)
 
         const productItems = itemsByCompany.get(company.id) || []
         const products = buildProductIntelligence(productItems)
         const totalKg = productItems.reduce((sum, item) => sum + (Number(item.quantity_kg) || 0), 0)
 
+        // Enriched with their own order_items so CRM message templates can
+        // mention the related product(s) without a per-row fetch.
+        const lastDeliveredOrder = lastDeliveredOrderRaw
+          ? { ...lastDeliveredOrderRaw, order_items: itemsByOrderId.get(lastDeliveredOrderRaw.id) || [] }
+          : null
+
         const lastOrder = latestByDate(companyOrders, 'created_at')
-        const quotedOrder = latestByDate(
+        const quotedOrderRaw = latestByDate(
           companyOrders.filter((o) => o.status === 'quoted'),
           'created_at',
         )
+        const quotedOrder = quotedOrderRaw
+          ? { ...quotedOrderRaw, order_items: itemsByOrderId.get(quotedOrderRaw.id) || [] }
+          : null
         const approvedOrder = latestByDate(
           companyOrders.filter((o) => o.status === 'customer_approved'),
           'created_at',

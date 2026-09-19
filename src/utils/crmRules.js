@@ -1,3 +1,5 @@
+import { summarizeOrderProducts } from './productIntelligence'
+
 const DAY_MS = 24 * 60 * 60 * 1000
 const QUOTE_FOLLOWUP_THRESHOLD_DAYS = 2
 const NEW_CUSTOMER_WINDOW_DAYS = 30
@@ -76,7 +78,10 @@ function quoteFollowupReason({ quotedOrder, quotedSinceDays }) {
       : `منتظر پاسخ مشتری برای سفارش ${quotedOrder.order_number ?? quotedOrder.id}`,
     action: { type: 'order', id: quotedOrder.id },
     nextAction: 'پیگیری قیمت',
-    meta: { orderNumber: quotedOrder.order_number ?? quotedOrder.id },
+    meta: {
+      orderNumber: quotedOrder.order_number ?? quotedOrder.id,
+      productSummary: summarizeOrderProducts(quotedOrder.order_items),
+    },
   }
 }
 
@@ -124,7 +129,10 @@ function deliveredFollowupReason({ lastDeliveredOrder }) {
     detail: `${days} روز از تحویل سفارش ${lastDeliveredOrder.order_number ?? lastDeliveredOrder.id} گذشته`,
     action: { type: 'order', id: lastDeliveredOrder.id },
     nextAction: 'تماس مجدد',
-    meta: { orderNumber: lastDeliveredOrder.order_number ?? lastDeliveredOrder.id },
+    meta: {
+      orderNumber: lastDeliveredOrder.order_number ?? lastDeliveredOrder.id,
+      productSummary: summarizeOrderProducts(lastDeliveredOrder.order_items),
+    },
   }
 }
 

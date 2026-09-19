@@ -5,6 +5,15 @@
   white-space: nowrap;
 }
 
+.crm-quick-actions-compact {
+  gap: 2px 8px;
+  font-size: 13px;
+}
+
+.crm-quick-actions-compact .btn-link {
+  padding: 3px 4px;
+}
+
 .crm-snooze {
   position: relative;
   display: inline-block;
@@ -107,4 +116,134 @@
   font-size: 13px;
   color: var(--text-muted);
   flex: 1;
+}
+
+/* ---- Compact CRM list (home page table + mobile cards) ---- */
+
+.crm-product-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.crm-product-more {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.crm-next-action-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.crm-next-action-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--surface-hover);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.crm-next-action-pill.tone-danger {
+  background: var(--status-lost-bg, #fee2e2);
+  color: var(--status-lost-text, #b91c1c);
+}
+
+.crm-next-action-pill.tone-warning {
+  background: var(--status-offer-bg, #ffedd5);
+  color: var(--status-offer-text, #c2410c);
+}
+
+.crm-next-action-pill.tone-neutral {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+}
+
+.crm-row-name-button {
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-h);
+  cursor: pointer;
+  padding: 0;
+  text-align: right;
+}
+
+.crm-row-name-button:hover {
+  text-decoration: underline;
+}
+
+.crm-clickable-row {
+  cursor: pointer;
+}
+
+/* Desktop table: hidden entirely on narrow widths, replaced by stacked cards. */
+.crm-cards {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .crm-table-wrapper {
+    display: none;
+  }
+
+  .crm-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .crm-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    cursor: pointer;
+  }
+
+  .crm-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .crm-card-name {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text-h);
+  }
+
+  .crm-card-rep {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .crm-card-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    padding: 3px 0;
+  }
+
+  .crm-card-label {
+    color: var(--text-muted);
+  }
+
+  .crm-card-actions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
 }

@@ -39,3 +39,25 @@ export function buildProductIntelligence(items) {
 
   return [...byProduct.values()].sort((a, b) => b.totalKg - a.totalKg)
 }
+
+// Short "order product reference" for CRM messages, e.g.
+// "مستربچ سفید 7101" or "مستربچ سفید 7101، مستربچ مشکی 4040 و 2 محصول دیگر".
+// Reuses whatever order_items snapshot the caller already loaded - never
+// issues its own query.
+export function summarizeOrderProducts(items) {
+  if (!items || items.length === 0) return ''
+
+  const names = items
+    .filter((item) => item.products?.name_fa || item.products?.code)
+    .map((item) => {
+      const name = item.products?.name_fa || 'محصول'
+      return item.products?.code ? `${name} ${item.products.code}` : name
+    })
+
+  if (names.length === 0) return ''
+
+  const shown = names.slice(0, 2)
+  const extraCount = names.length - shown.length
+  const summary = shown.join('، ')
+  return extraCount > 0 ? `${summary} و ${extraCount} محصول دیگر` : summary
+}

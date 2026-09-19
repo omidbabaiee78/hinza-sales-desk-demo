@@ -2,13 +2,12 @@ import { useMemo, useState } from 'react'
 import { useCrmCustomers } from '../../hooks/useCrmCustomers'
 import { useActiveProducts } from '../../hooks/useActiveProducts'
 import { dbReasonForAttentionKey, reasonContext } from '../../utils/crmRules'
-import { CRM_CHANNEL_LABELS } from '../../constants/crmLabels'
 import { formatBalanceLine } from '../../utils/balance'
-import { formatJalaliDate, formatKg, formatQuantity } from '../../utils/formatters'
-import StatusBadge from '../orders/StatusBadge'
+import { formatJalaliDate, formatQuantity } from '../../utils/formatters'
 import CrmQuickActions from '../crm/CrmQuickActions'
 import CrmSnoozeButton from '../crm/CrmSnoozeButton'
 import ErrorBanner from '../common/ErrorBanner'
+import '../crm/Crm.css'
 import '../common/DataTable.css'
 import './AdminCrmPage.css'
 
@@ -44,6 +43,49 @@ function matchesSearch(row, query) {
     .toLowerCase()
   if (text.includes(query)) return true
   return row.products.some((p) => `${p.code} ${p.name}`.toLowerCase().includes(query))
+}
+
+// Presentation-only tone for the "اقدام بعدی" pill - purely cosmetic, it
+// never changes what nextAction string the CRM rules produce.
+function nextActionTone(nextAction) {
+  if (nextAction === 'پیگیری تسویه') return 'danger'
+  if (nextAction === 'پیگیری قیمت' || nextAction === 'نیاز به تأیید سفارش') return 'warning'
+  return 'neutral'
+}
+
+function MainProducts({ products }) {
+  if (!products || products.length === 0) return <span>—</span>
+  const shown = products.slice(0, 2)
+  const extra = products.length - shown.length
+  return (
+    <div className="crm-product-lines">
+      {shown.map((p) => (
+        <span key={p.productId}>
+          {p.code ? `${p.code} ${p.name}` : p.name}
+        </span>
+      ))}
+      {extra > 0 && <span className="crm-product-more">+{formatQuantity(extra)} محصول</span>}
+    </div>
+  )
+}
+
+function NextActionCell({ row, onSnoozed }) {
+  return (
+    <div className="crm-next-action-cell" onClick={(e) => e.stopPropagation()}>
+      <span className={`crm-next-action-pill tone-${nextActionTone(row.nextAction)}`}>
+        {row.nextAction}
+      </span>
+      {row.topReason && (
+        <CrmSnoozeButton
+          companyId={row.id}
+          reasonKey={row.topReason.key}
+          orderId={reasonContext(row.topReason).orderId}
+          invoiceId={reasonContext(row.topReason).invoiceId}
+          onDone={onSnoozed}
+        />
+      )}
+    </div>
+  )
 }
 
 export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustomer }) {
@@ -201,37 +243,31 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
         </label>
       </div>
 
-      <div className="table-wrapper">
+      {/* Desktop: compact 7-column table, no horizontal scroll at laptop width. */}
+      <div className="table-wrapper crm-table-wrapper">
         <table className="crm-table">
           <thead>
             <tr>
               <th>نام شرکت</th>
               <th>نماینده</th>
-              <th>موبایل</th>
-              <th data-hide-mobile="true">شهر</th>
-              <th data-hide-mobile="true">محصولات اصلی</th>
+              <th>محصولات اصلی</th>
               <th>آخرین خرید</th>
-              <th data-hide-mobile="true">مجموع خرید (کیلوگرم)</th>
-              <th data-hide-mobile="true">تعداد سفارش‌ها</th>
-              <th data-hide-mobile="true">فاکتور باز</th>
               <th>مانده حساب</th>
-              <th data-hide-mobile="true">وضعیت آخرین سفارش</th>
-              <th data-hide-mobile="true">آخرین ارتباط</th>
-              <th>اقدام پیشنهادی</th>
-              <th></th>
+              <th>اقدام بعدی</th>
+              <th>عملیات</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={14} className="empty-row">
+                <td colSpan={7} className="empty-row">
                   در حال بارگذاری...
                 </td>
               </tr>
             )}
             {!loading && filteredRows.length === 0 && (
               <tr>
-                <td colSpan={14} className="empty-row">
+                <td colSpan={7} className="empty-row">
                   مشتری با این فیلتر پیدا نشد.
                 </td>
               </tr>
@@ -246,24 +282,28 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
                 )
 
                 return (
-                  <tr key={row.id}>
-                    <td data-label="نام شرکت">{row.name}</td>
-                    <td data-label="نماینده">{row.representative?.full_name || '—'}</td>
-                    <td data-label="موبایل" dir="ltr" style={{ textAlign: 'right' }}>
-                      {row.representative?.phone || '—'}
+                  <tr
+                    key={row.id}
+                    className="crm-clickable-row"
+                    onClick={() => onOpenCustomer(row.id)}
+                  >
+                    <td>
+                      <button
+                        type="button"
+                        className="crm-row-name-button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onOpenCustomer(row.id)
+                        }}
+                      >
+                        {row.name}
+                      </button>
                     </td>
-                    <td data-label="شهر" data-hide-mobile="true">
-                      {row.city || '—'}
+                    <td>{row.representative?.full_name || '—'}</td>
+                    <td>
+                      <MainProducts products={row.products} />
                     </td>
-                    <td data-label="محصولات اصلی" data-hide-mobile="true">
-                      {row.products.length === 0
-                        ? '—'
-                        : row.products
-                            .slice(0, 2)
-                            .map((p) => p.name)
-                            .join('، ')}
-                    </td>
-                    <td data-label="آخرین خرید">
+                    <td>
                       {row.lastPurchaseAt ? (
                         <>
                           {formatJalaliDate(row.lastPurchaseAt)}
@@ -275,25 +315,10 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
                         '—'
                       )}
                     </td>
-                    <td data-label="مجموع خرید" data-hide-mobile="true">
-                      {formatKg(row.totalKg)}
+                    <td>{formatBalanceLine(row.balance)}</td>
+                    <td>
+                      <NextActionCell row={row} onSnoozed={refresh} />
                     </td>
-                    <td data-label="تعداد سفارش‌ها" data-hide-mobile="true">
-                      {formatQuantity(row.orderCount)}
-                    </td>
-                    <td data-label="فاکتور باز" data-hide-mobile="true">
-                      {formatQuantity(row.openInvoicesCount)}
-                    </td>
-                    <td data-label="مانده حساب">{formatBalanceLine(row.balance)}</td>
-                    <td data-label="وضعیت آخرین سفارش" data-hide-mobile="true">
-                      {row.lastOrderStatus ? <StatusBadge status={row.lastOrderStatus} /> : '—'}
-                    </td>
-                    <td data-label="آخرین ارتباط" data-hide-mobile="true">
-                      {row.lastContact
-                        ? `${CRM_CHANNEL_LABELS[row.lastContact.channel] || row.lastContact.channel} - ${formatJalaliDate(row.lastContact.created_at)}`
-                        : '—'}
-                    </td>
-                    <td data-label="اقدام پیشنهادی">{row.nextAction}</td>
                     <td className="cell-actions">
                       <CrmQuickActions
                         companyId={row.id}
@@ -306,22 +331,74 @@ export default function AdminCrmPage({ onOpenOrder, onOpenInvoice, onOpenCustome
                         onOpenOrder={onOpenOrder}
                         onOpenInvoice={onOpenInvoice}
                         onOpenCustomer={onOpenCustomer}
+                        viewLabel="مشاهده"
+                        showRelatedLinks={false}
+                        compact
                       />
-                      {row.topReason && (
-                        <CrmSnoozeButton
-                          companyId={row.id}
-                          reasonKey={row.topReason.key}
-                          orderId={relatedOrderId}
-                          invoiceId={relatedInvoiceId}
-                          onDone={refresh}
-                        />
-                      )}
                     </td>
                   </tr>
                 )
               })}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile: stacked cards instead of a squeezed/scrolling table. */}
+      <div className="crm-cards">
+        {loading && <p className="profile-empty">در حال بارگذاری...</p>}
+        {!loading && filteredRows.length === 0 && (
+          <p className="profile-empty">مشتری با این فیلتر پیدا نشد.</p>
+        )}
+        {!loading &&
+          filteredRows.map((row) => {
+            const templateKey = row.topReason ? dbReasonForAttentionKey(row.topReason.key) : 'general'
+            const { orderId: relatedOrderId, invoiceId: relatedInvoiceId } = reasonContext(row.topReason)
+
+            return (
+              <div key={row.id} className="crm-card" onClick={() => onOpenCustomer(row.id)}>
+                <div className="crm-card-top">
+                  <div>
+                    <div className="crm-card-name">{row.name}</div>
+                    <div className="crm-card-rep">{row.representative?.full_name || '—'}</div>
+                  </div>
+                  <NextActionCell row={row} onSnoozed={refresh} />
+                </div>
+                <div className="crm-card-row">
+                  <span className="crm-card-label">محصولات اصلی</span>
+                  <MainProducts products={row.products} />
+                </div>
+                <div className="crm-card-row">
+                  <span className="crm-card-label">آخرین خرید</span>
+                  <span>
+                    {row.lastPurchaseAt
+                      ? `${formatJalaliDate(row.lastPurchaseAt)} (${formatQuantity(row.daysSincePurchase)} روز پیش)`
+                      : '—'}
+                  </span>
+                </div>
+                <div className="crm-card-row">
+                  <span className="crm-card-label">مانده حساب</span>
+                  <span>{formatBalanceLine(row.balance)}</span>
+                </div>
+                <div className="crm-card-actions">
+                  <CrmQuickActions
+                    companyId={row.id}
+                    phone={row.representative?.phone}
+                    customerName={row.representative?.full_name || row.name}
+                    templateKey={templateKey}
+                    templateVars={row.topReason?.meta || {}}
+                    relatedOrderId={relatedOrderId}
+                    relatedInvoiceId={relatedInvoiceId}
+                    onOpenOrder={onOpenOrder}
+                    onOpenInvoice={onOpenInvoice}
+                    onOpenCustomer={onOpenCustomer}
+                    viewLabel="مشاهده"
+                    showRelatedLinks={false}
+                    compact
+                  />
+                </div>
+              </div>
+            )
+          })}
       </div>
     </div>
   )

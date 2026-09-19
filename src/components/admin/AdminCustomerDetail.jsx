@@ -129,6 +129,8 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
       (order.order_items || []).map((item) => ({ ...item, order_created_at: order.created_at })),
     ),
   )
+  const totalPurchasedKg = customerProducts.reduce((sum, p) => sum + p.totalKg, 0)
+  const lastOrder = orders[0] || null
 
   const isLoyal = loyaltyInfo ? Number(loyaltyInfo.auto_discount_percent) > 0 : false
   const nextTierIn =
@@ -157,6 +159,11 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
       key: 'lastPurchase',
       label: 'آخرین خرید',
       value: ordersLoading ? '—' : lastPurchaseAt ? formatJalaliDate(lastPurchaseAt) : '—',
+    },
+    {
+      key: 'totalPurchasedKg',
+      label: 'مجموع خرید (کیلوگرم)',
+      value: ordersLoading ? '—' : formatKg(totalPurchasedKg),
     },
   ]
 
@@ -257,6 +264,12 @@ export default function AdminCustomerDetail({ companyId, onBack, onOpenOrder, on
           <div className="info-row">
             <span className="info-label">تاریخ عضویت</span>
             <span className="info-value">{formatJalaliDate(representative?.created_at)}</span>
+          </div>
+          <div className="info-row">
+            <span className="info-label">وضعیت آخرین سفارش</span>
+            <span className="info-value">
+              {ordersLoading ? '—' : lastOrder ? <StatusBadge status={lastOrder.status} /> : '—'}
+            </span>
           </div>
         </section>
       </div>
