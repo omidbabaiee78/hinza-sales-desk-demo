@@ -4,6 +4,7 @@ import { PRIORITY_BUCKET_LABELS, TODAY_ACTION_TYPES, priorityBucketForTier } fro
 import ErrorBanner from '../../common/ErrorBanner'
 import LeadActivityFormModal from '../leads/LeadActivityFormModal'
 import TodayItemCard from './TodayItemCard'
+import TodayProspectingSummary from './TodayProspectingSummary'
 import './Today.css'
 
 const TEHRAN_TODAY_FORMATTER = new Intl.DateTimeFormat('fa-IR', {
@@ -136,6 +137,8 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
       </div>
 
       <ErrorBanner message={error} onRetry={refresh} />
+
+      <TodayProspectingSummary onOpenProspecting={() => onNavigate('prospecting')} />
 
       <div className="today-summary-grid">
         <button type="button" className="today-summary-card tone-lost" onClick={() => setTypeFilter('lead')}>

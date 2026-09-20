@@ -1,4 +1,4 @@
-import { LEAD_PREFERRED_CHANNELS, LEAD_PRIORITIES, LEAD_SOURCES } from '../utils/leadStatus'
+import { LEAD_PREFERRED_CHANNELS, LEAD_PRIORITIES, LEAD_SOURCES } from '../utils/leadStatus.js'
 
 // ---------------------------------------------------------------------------
 // The ONE place a parsed row (from either the standard-table or smart-mode
