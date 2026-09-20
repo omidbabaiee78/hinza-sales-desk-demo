@@ -1,5 +1,5 @@
-import { followUpState } from '../utils/leadFollowUp'
-import { generateAllCandidates } from './ruleDefinitions'
+import { followUpState } from '../utils/leadFollowUp.js'
+import { generateAllCandidates } from './ruleDefinitions.js'
 
 // ---------------------------------------------------------------------------
 // Pure reconciliation planning - given a snapshot of current business data,

@@ -1,7 +1,7 @@
-import { isValidIranMobile } from './phone'
-import { followUpState } from './leadFollowUp'
-import { normalizeCompanyName } from './leadDuplicates'
-import { splitContactDisplay } from './leadImport/contactNumbers'
+import { isValidIranMobile } from './phone.js'
+import { followUpState } from './leadFollowUp.js'
+import { normalizeCompanyName } from './leadDuplicates.js'
+import { splitContactDisplay } from './leadImport/contactNumbers.js'
 
 // ---------------------------------------------------------------------------
 // Deterministic, explainable "readiness to work" scoring - NOT a purchase

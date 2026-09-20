@@ -1,4 +1,4 @@
-import { toE164Iran } from './phone'
+import { toE164Iran } from './phone.js'
 
 export function normalizeCompanyName(name) {
   return String(name || '')

@@ -1,5 +1,5 @@
-import { isValidIranMobile, toE164Iran } from '../phone'
-import { normalizeDigits } from './digits'
+import { isValidIranMobile, toE164Iran } from '../phone.js'
+import { normalizeDigits } from './digits.js'
 
 // ---------------------------------------------------------------------------
 // Centralized Iranian contact-number extraction - the ONE place phone/mobile

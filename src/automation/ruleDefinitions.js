@@ -1,6 +1,6 @@
-import { followUpState } from '../utils/leadFollowUp'
-import { hasNoContactRoute, computeDuplicateRiskLeadIds } from '../utils/leadIntelligence'
-import { resolveTransitionTimestamp, hoursSince } from '../messagingRules/orderEventResolver'
+import { followUpState } from '../utils/leadFollowUp.js'
+import { hasNoContactRoute, computeDuplicateRiskLeadIds } from '../utils/leadIntelligence.js'
+import { resolveTransitionTimestamp, hoursSince } from '../messagingRules/orderEventResolver.js'
 
 // ---------------------------------------------------------------------------
 // Phase 17 - Automation & Task Engine rule definitions.

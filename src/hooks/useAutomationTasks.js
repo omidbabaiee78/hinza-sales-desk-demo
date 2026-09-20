@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import { computeReconciliationPlan } from '../automation/reconciler'
+import { supabase } from '../lib/supabaseClient'
 import {
-  applyReconciliationPlan,
   approveTask,
   cancelTask,
   fetchActiveAndFailedTasks,
   fetchAutomationRules,
   fetchAutomationSettings,
-  fetchAutomationSnapshot,
   fetchTaskHistory,
   retryTask,
+  runReconciliationCycle,
   setAutomationEnabled,
   setRuleAutonomyMode,
   setRuleEnabled,
@@ -25,13 +24,12 @@ function translateDbError(message) {
 }
 
 // Orchestrates the Automation page: loads settings/rules/tasks, optionally
-// runs a full reconciliation cycle (fetch business data -> compute plan ->
-// apply it), and exposes small, explicit admin actions. This is the ONLY
-// place that triggers reconciliation from the frontend - a temporary
-// execution path (page-open + manual button) until a real scheduler exists
-// server-side; the reconciler itself (automation/reconciler.js) has no
-// knowledge of how/when it's invoked, so moving it server-side later needs
-// no rule changes.
+// runs a full reconciliation cycle, and exposes small, explicit admin
+// actions. This is the manual/browser trigger for reconciliation - the same
+// cycle also runs on a schedule server-side (supabase/functions/automation-
+// reconcile), both calling automation/taskService.runReconciliationCycle()
+// directly so there is exactly one reconciliation code path, never a
+// browser copy and a server copy.
 export function useAutomationTasks() {
   const [settings, setSettings] = useState(null)
   const [rules, setRules] = useState([])
@@ -50,13 +48,9 @@ export function useAutomationTasks() {
 
   const load = useCallback(async ({ withReconcile }) => {
     try {
-      const settingsData = await fetchAutomationSettings()
-      const rulesData = await fetchAutomationRules()
-      // automation_rules rows are identified by `rule_key`, not `task_type`
-      // (that column only exists on automation_tasks) - its value is the
-      // same task_type string, just under a different column name.
-      const rulesByType = new Map(rulesData.map((r) => [r.rule_key, r]))
-      let tasks = await fetchActiveAndFailedTasks()
+      let settingsData
+      let rulesData
+      let tasks
 
       if (withReconcile) {
         setReconciling(true)
@@ -64,25 +58,25 @@ export function useAutomationTasks() {
         // that exist - and a task only ever gets created DURING
         // reconciliation, so this snapshot always covers every task the
         // admin can currently see, first load or not.
-        const snapshot = await fetchAutomationSnapshot(tasks)
-        const plan = computeReconciliationPlan({
-          settings: settingsData,
-          rulesByType,
-          existingTasks: tasks,
-          businessData: snapshot,
-          now: new Date(),
-        })
-        const summary = await applyReconciliationPlan(plan)
-        setLastReconcileSummary(summary)
-        tasks = await fetchActiveAndFailedTasks()
-        setCompaniesById(snapshot.companiesById)
-        setLeadsById(snapshot.leadsById)
-        setOrdersById(snapshot.ordersById)
-        setInvoicesById(snapshot.invoicesById)
-        setSuggestionsById(snapshot.suggestionsById)
+        const cycle = await runReconciliationCycle(supabase)
+        settingsData = cycle.settings
+        rulesData = cycle.rules
+        setLastReconcileSummary(cycle.summary)
+        setCompaniesById(cycle.snapshot.companiesById)
+        setLeadsById(cycle.snapshot.leadsById)
+        setOrdersById(cycle.snapshot.ordersById)
+        setInvoicesById(cycle.snapshot.invoicesById)
+        setSuggestionsById(cycle.snapshot.suggestionsById)
+        tasks = await fetchActiveAndFailedTasks(supabase)
+      } else {
+        ;[settingsData, rulesData, tasks] = await Promise.all([
+          fetchAutomationSettings(supabase),
+          fetchAutomationRules(supabase),
+          fetchActiveAndFailedTasks(supabase),
+        ])
       }
 
-      const history = await fetchTaskHistory()
+      const history = await fetchTaskHistory(supabase)
       setError('')
       setSettings(settingsData)
       setRules(rulesData)
@@ -111,7 +105,7 @@ export function useAutomationTasks() {
   async function runAction(fn, ...args) {
     setActionError('')
     try {
-      await fn(...args)
+      await fn(supabase, ...args)
       await load({ withReconcile: false })
     } catch (err) {
       setActionError(translateDbError(err.message))
