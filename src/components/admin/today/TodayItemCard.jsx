@@ -26,7 +26,7 @@ function PriorityDot({ tier }) {
   )
 }
 
-function LeadQuickActions({ item, onOpenLead, onQuickFollowUp, onSnoozed }) {
+function LeadQuickActions({ item, onOpenLead, onQuickFollowUp, onOpenOutreach, onSnoozed }) {
   const [snoozing, setSnoozing] = useState(false)
 
   async function snooze(days) {
@@ -47,6 +47,9 @@ function LeadQuickActions({ item, onOpenLead, onQuickFollowUp, onSnoozed }) {
       <LeadQuickContact phone={item.phone} compact />
       <button type="button" className="btn-link" onClick={() => onQuickFollowUp(item.refId)}>
         ثبت پیگیری
+      </button>
+      <button type="button" className="btn-link" onClick={onOpenOutreach}>
+        اقدام در پیگیری فروش
       </button>
       <button type="button" className="btn-link" disabled={snoozing} onClick={() => snooze(1)}>
         فردا
@@ -113,6 +116,7 @@ function ItemQuickActions({ item, handlers }) {
         item={item}
         onOpenLead={handlers.onOpenLead}
         onQuickFollowUp={handlers.onQuickFollowUp}
+        onOpenOutreach={handlers.onOpenOutreach}
         onSnoozed={handlers.onRefresh}
       />
     )

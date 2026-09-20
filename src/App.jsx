@@ -8,7 +8,7 @@ import AccountStatusScreen from './components/auth/AccountStatusScreen'
 import AdminApp from './components/admin/AdminApp'
 import CustomerApp from './components/customer/CustomerApp'
 
-function AuthenticatedGate({ user, onSignOut, onOpenContact }) {
+function AuthenticatedGate({ user, onSignOut, onOpenContact, pathname, onNavigateUrl }) {
   const { profile, company, loading, error, refresh } = useProfile(user.id)
 
   if (loading) {
@@ -53,7 +53,7 @@ function AuthenticatedGate({ user, onSignOut, onOpenContact }) {
   }
 
   if (role === 'admin') {
-    return <AdminApp profile={profile} onSignOut={onSignOut} />
+    return <AdminApp profile={profile} onSignOut={onSignOut} pathname={pathname} onNavigateUrl={onNavigateUrl} />
   }
 
   if (role === 'customer') {
@@ -92,6 +92,8 @@ function App() {
       user={user}
       onSignOut={signOut}
       onOpenContact={() => navigate('/contact')}
+      pathname={pathname}
+      onNavigateUrl={navigate}
     />
   )
 }

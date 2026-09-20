@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check:automation": "node scripts/checkAutomationReconciler.mjs"
+    "check:automation": "node scripts/checkAutomationReconciler.mjs",
+    "check:outreach": "node scripts/checkOutreachEligibility.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

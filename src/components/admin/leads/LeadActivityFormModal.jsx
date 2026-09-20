@@ -18,13 +18,10 @@ export default function LeadActivityFormModal({ leadId, activityType, onSaved, o
     e.preventDefault()
     setError('')
     setSubmitting(true)
+    const nextFollowUpAt = followUpIsoFromDate(followUpDate)
     try {
-      await addLeadActivity(leadId, {
-        activityType,
-        note,
-        nextFollowUpAt: followUpIsoFromDate(followUpDate),
-      })
-      onSaved()
+      await addLeadActivity(leadId, { activityType, note, nextFollowUpAt })
+      onSaved({ note, nextFollowUpAt })
     } catch (err) {
       setError(err.message || 'ثبت فعالیت با خطا مواجه شد.')
       setSubmitting(false)

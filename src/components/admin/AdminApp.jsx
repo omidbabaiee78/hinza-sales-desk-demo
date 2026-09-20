@@ -18,11 +18,13 @@ import AdminLeadsPage from './leads/AdminLeadsPage'
 import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
+import AdminOutreachPage from './outreach/AdminOutreachPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
   { key: 'today', label: 'امروز' },
   { key: 'automation', label: 'اتوماسیون' },
+  { key: 'outreach', label: 'پیگیری فروش' },
   { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
   { key: 'customers', label: 'مشتریان' },
   { key: 'crm', label: 'CRM' },
@@ -39,12 +41,33 @@ const PLACEHOLDER_TITLES = {
   payments: 'پرداخت‌ها',
 }
 
-export default function AdminApp({ profile, onSignOut }) {
-  const [activeKey, setActiveKey] = useState('dashboard')
+const NAV_KEYS = new Set(NAV_ITEMS.map((item) => item.key))
+
+// Maps a URL like /admin/outreach to its nav key - so every admin tab is a
+// real, bookmarkable/deep-linkable route (e.g. /admin/outreach), not just
+// in-memory tab state. An unrecognized or bare /admin path falls back to
+// 'dashboard', same as the app's previous default.
+function keyFromPathname(pathname) {
+  const match = /^\/admin\/([a-zA-Z]+)/.exec(pathname || '')
+  const key = match ? match[1] : 'dashboard'
+  return NAV_KEYS.has(key) ? key : 'dashboard'
+}
+
+export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }) {
+  const [activeKey, setActiveKey] = useState(() => keyFromPathname(pathname))
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [selectedCustomerId, setSelectedCustomerId] = useState(null)
   const [selectedLeadId, setSelectedLeadId] = useState(null)
+
+  // Keeps activeKey in sync with browser back/forward navigation - adjusting
+  // state during render (React's documented pattern for "state derived from
+  // a prop") rather than in a useEffect, which would cause an extra render.
+  const [syncedPathname, setSyncedPathname] = useState(pathname)
+  if (pathname !== syncedPathname) {
+    setSyncedPathname(pathname)
+    setActiveKey(keyFromPathname(pathname))
+  }
 
   function navigate(key) {
     setActiveKey(key)
@@ -52,6 +75,7 @@ export default function AdminApp({ profile, onSignOut }) {
     setSelectedInvoiceId(null)
     setSelectedCustomerId(null)
     setSelectedLeadId(null)
+    onNavigateUrl?.(`/admin/${key}`)
   }
 
   function openInvoice(invoiceId) {
@@ -119,6 +143,7 @@ export default function AdminApp({ profile, onSignOut }) {
           onOpenInvoice={openInvoice}
         />
       )}
+      {activeKey === 'outreach' && <AdminOutreachPage onOpenLead={openLead} />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&
         (selectedOrderId ? (
