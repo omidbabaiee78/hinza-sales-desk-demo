@@ -1,6 +1,6 @@
 import { evaluateOutreachOpportunity } from './eligibility.js'
 import { composeOutreachMessage, composeOutreachSubject } from './messageComposer.js'
-import { mostRecentAttemptAt, countQualifyingAttempts } from './cooldown.js'
+import { mostRecentQualifyingAttempt, countQualifyingAttempts } from './cooldown.js'
 
 const LEAD_TASK_TYPES = new Set(['lead_first_contact', 'lead_followup_due', 'lead_followup_overdue'])
 const QUEUEABLE_TASK_STATUSES = new Set(['ready', 'waiting_approval'])
@@ -23,6 +23,7 @@ export function buildOutreachOpportunities({ tasks, leadsById, settings, attempt
     const leadAttempts = task.lead_id ? attemptsByLeadId.get(task.lead_id) || [] : []
 
     const evaluation = evaluateOutreachOpportunity({ lead, settings, leadAttempts, duplicateRiskIds, now })
+    const lastAttempt = mostRecentQualifyingAttempt(leadAttempts)
 
     const productNames = (lead?.products || []).map((p) => p.name_fa).filter(Boolean)
     const message =
@@ -53,7 +54,8 @@ export function buildOutreachOpportunities({ tasks, leadsById, settings, attempt
       subject,
       productNames,
       attemptCount: countQualifyingAttempts(leadAttempts),
-      lastOutreachAt: mostRecentAttemptAt(leadAttempts),
+      lastOutreachAt: lastAttempt?.created_at || null,
+      lastOutreachAttemptId: lastAttempt?.id || null,
     })
   }
 

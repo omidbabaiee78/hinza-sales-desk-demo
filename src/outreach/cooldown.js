@@ -13,10 +13,14 @@ export function countQualifyingAttempts(attempts) {
   return qualifyingAttempts(attempts).length
 }
 
-export function mostRecentAttemptAt(attempts) {
+export function mostRecentQualifyingAttempt(attempts) {
   const qualifying = qualifyingAttempts(attempts)
   if (qualifying.length === 0) return null
-  return qualifying.reduce((latest, a) => (!latest || a.created_at > latest ? a.created_at : latest), null)
+  return qualifying.reduce((latest, a) => (!latest || a.created_at > latest.created_at ? a : latest), null)
+}
+
+export function mostRecentAttemptAt(attempts) {
+  return mostRecentQualifyingAttempt(attempts)?.created_at || null
 }
 
 // Returns { withinCooldown, nextAvailableAt (Date|null) }.

@@ -38,7 +38,7 @@ export default function AdminOutreachPage({ onOpenLead }) {
   const [activeTab, setActiveTab] = useState('ready')
   const [overdueOnly, setOverdueOnly] = useState(false)
 
-  const handlers = { approve, snooze, dismiss, recordAttempt, recordCompletedAttempt, markDoNotContact }
+  const handlers = { approve, snooze, dismiss, recordAttempt, recordCompletedAttempt, markDoNotContact, refresh }
 
   const buckets = useMemo(() => {
     const ready = []

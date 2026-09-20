@@ -8,6 +8,7 @@ import { emailChannel } from '../../../outreach/channels/email'
 import MessagePreviewModal from '../../crm/MessagePreviewModal'
 import LeadActivityFormModal from '../leads/LeadActivityFormModal'
 import DoNotContactConfirmModal from './DoNotContactConfirmModal'
+import ReplyReviewModal from '../replies/ReplyReviewModal'
 
 function isoDateNDaysFromNow(n) {
   const d = new Date()
@@ -26,7 +27,7 @@ function completionActivityType(channel) {
 }
 
 export default function OutreachCard({ opportunity, onOpenLead, handlers }) {
-  const [activeModal, setActiveModal] = useState(null) // 'whatsapp' | 'sms' | 'email' | 'complete' | 'doNotContact'
+  const [activeModal, setActiveModal] = useState(null) // 'whatsapp' | 'sms' | 'email' | 'complete' | 'doNotContact' | 'reply'
   const [busy, setBusy] = useState(false)
 
   const { lead, leadId, taskId, task, channel, message, subject, outreachStatus, reasons, withinContactWindow, nextAvailableAt } =
@@ -84,6 +85,11 @@ export default function OutreachCard({ opportunity, onOpenLead, handlers }) {
   function handleActivitySaved() {
     handlers.recordCompletedAttempt(opportunity, { channel, messageSnapshot: message })
     setActiveModal(null)
+  }
+
+  function handleReplySaved() {
+    setActiveModal(null)
+    handlers.refresh?.({ withReconcile: true })
   }
 
   const phonePrepared = channel === 'phone' ? phoneChannel.prepare({ lead }) : null
@@ -173,6 +179,12 @@ export default function OutreachCard({ opportunity, onOpenLead, handlers }) {
           </button>
         )}
 
+        {leadId && (
+          <button type="button" className="btn-link" onClick={() => setActiveModal('reply')}>
+            ثبت پاسخ
+          </button>
+        )}
+
         <button type="button" className="btn-link" disabled={busy} onClick={() => run(handlers.snooze, taskId, isoDateNDaysFromNow(1))}>
           فردا
         </button>
@@ -235,6 +247,18 @@ export default function OutreachCard({ opportunity, onOpenLead, handlers }) {
         <DoNotContactConfirmModal
           companyLabel={displayName}
           onConfirm={() => handlers.markDoNotContact(leadId).then(() => setActiveModal(null))}
+          onCancel={() => setActiveModal(null)}
+        />
+      )}
+      {activeModal === 'reply' && (
+        <ReplyReviewModal
+          mode="capture"
+          leadId={leadId}
+          outreachAttemptId={opportunity.lastOutreachAttemptId}
+          automationTaskId={taskId}
+          defaultChannel={channel || 'manual'}
+          contactLabel={displayName}
+          onSaved={handleReplySaved}
           onCancel={() => setActiveModal(null)}
         />
       )}

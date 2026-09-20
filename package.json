@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check:automation": "node scripts/checkAutomationReconciler.mjs",
-    "check:outreach": "node scripts/checkOutreachEligibility.mjs"
+    "check:outreach": "node scripts/checkOutreachEligibility.mjs",
+    "check:replies": "node scripts/checkReplyIntelligence.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

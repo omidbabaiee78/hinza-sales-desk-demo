@@ -19,12 +19,14 @@ import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
 import AdminOutreachPage from './outreach/AdminOutreachPage'
+import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'داشبورد' },
   { key: 'today', label: 'امروز' },
   { key: 'automation', label: 'اتوماسیون' },
   { key: 'outreach', label: 'پیگیری فروش' },
+  { key: 'replies', label: 'پاسخ‌ها' },
   { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
   { key: 'customers', label: 'مشتریان' },
   { key: 'crm', label: 'CRM' },
@@ -144,6 +146,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
         />
       )}
       {activeKey === 'outreach' && <AdminOutreachPage onOpenLead={openLead} />}
+      {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&
         (selectedOrderId ? (
