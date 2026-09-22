@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict'
 import { evaluateShadowOutreachOpportunity, computeShadowPriority } from '../src/outreach/prospectingShadow.js'
-import { composeShadowOutreachMessage } from '../src/outreach/shadowMessageComposer.js'
+import { composeShadowOutreachMessage, sanitizeIndustryLabelsForCustomerFacing } from '../src/outreach/shadowMessageComposer.js'
 import { runShadowOutreachCycle } from '../src/outreach/shadowPipeline.js'
 import { whatsappChannel } from '../src/outreach/channels/whatsapp.js'
 import { smsChannel } from '../src/outreach/channels/sms.js'
@@ -282,15 +282,61 @@ await check('priority is deterministic: higher score / higher confidence / fresh
 // ---------------------------------------------------------------------------
 
 await check('message composer uses hedged "may be relevant" language for product fit, never a confirmed-need claim', () => {
-  const { message } = composeShadowOutreachMessage({ lead: prospectLead(), industryGuess: null, productFitProducts: ['مستربچ سفید'] })
+  const { message } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: [], productFitProducts: ['مستربچ سفید'] })
   assert.match(message, /ممکن است.*مرتبط باشد/)
   assert.doesNotMatch(message, /می‌دانیم که شما.*نیاز دارید/)
 })
 
 await check('message composer falls back to a safe generic line when there is no evidence at all - never invents specifics', () => {
-  const { message, evidenceUsed } = composeShadowOutreachMessage({ lead: prospectLead(), industryGuess: null, productFitProducts: [] })
+  const { message, evidenceUsed } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: [], productFitProducts: [] })
   assert.equal(evidenceUsed, 'none')
   assert.ok(message.length > 0)
+})
+
+// ---------------------------------------------------------------------------
+// Phase 25 quality fix - raw source/adapter taxonomy must NEVER reach
+// customer-facing copy. General allowlist-based sanitization, not a
+// blocklist of specific bad strings.
+// ---------------------------------------------------------------------------
+
+await check('a raw OSM tag value ("works") never appears in customer-facing message text, even if a caller passed it by mistake', () => {
+  const { message } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: ['works'], productFitProducts: [] })
+  assert.doesNotMatch(message, /works/)
+})
+
+await check('sanitizeIndustryLabelsForCustomerFacing drops "works" - not because it is specifically blocked, but because it is not a real TARGET_INDUSTRIES label', () => {
+  assert.deepEqual(sanitizeIndustryLabelsForCustomerFacing(['works']), [])
+})
+
+await check('a generic raw tag ("industrial") is never turned into an invented specific industry', () => {
+  const { message } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: ['industrial'], productFitProducts: [] })
+  assert.doesNotMatch(message, /industrial/)
+  // falls through to the fully generic line, never a fabricated specific claim
+  assert.match(message, /در زمینه تأمین مستربچ و مواد پلیمری فعالیت داریم/)
+})
+
+await check('an unrecognized/unknown raw value ("yes"/"unknown") is safely omitted, not exposed and not guessed', () => {
+  assert.deepEqual(sanitizeIndustryLabelsForCustomerFacing(['yes', 'unknown', 'other']), [])
+  const { message } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: ['yes', 'unknown'], productFitProducts: [] })
+  assert.doesNotMatch(message, /\byes\b|\bunknown\b/)
+})
+
+await check('a genuine, curated target-industry label (e.g. "قالب‌گیری تزریقی") remains available and IS used in the message', () => {
+  assert.deepEqual(sanitizeIndustryLabelsForCustomerFacing(['قالب‌گیری تزریقی']), ['قالب‌گیری تزریقی'])
+  const { message, evidenceUsed } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: ['قالب‌گیری تزریقی'], productFitProducts: [] })
+  assert.match(message, /قالب‌گیری تزریقی/)
+  assert.equal(evidenceUsed, 'industry_taxonomy_match')
+})
+
+await check('a mix of one real label and one raw/unknown value keeps only the real one', () => {
+  assert.deepEqual(sanitizeIndustryLabelsForCustomerFacing(['works', 'بسته‌بندی پلاستیکی']), ['بسته‌بندی پلاستیکی'])
+})
+
+await check('empty product-fit AND no real industry label produces safe, fully generic copy - never a raw label substitute', () => {
+  const { message, evidenceUsed } = composeShadowOutreachMessage({ lead: prospectLead(), industryLabels: ['works', 'yes'], productFitProducts: [] })
+  assert.equal(evidenceUsed, 'none')
+  assert.doesNotMatch(message, /works|yes/)
+  assert.match(message, /در زمینه تأمین مستربچ و مواد پلیمری فعالیت داریم/)
 })
 
 // ---------------------------------------------------------------------------
@@ -328,6 +374,38 @@ await check('a fresh shadow run creates a suggestion for an eligible prospecting
   assert.equal(client.tables.prospect_outreach_suggestions.length, 1)
   assert.equal(client.tables.prospect_outreach_suggestions[0].status, 'pending')
   assert.ok(client.tables.prospect_outreach_suggestions[0].message_draft)
+})
+
+await check('Phase 25 quality fix, end-to-end: a raw OSM industry_guess ("works") with no real keyword evidence never leaks into the suggestion message, but IS preserved for diagnostics', async () => {
+  const client = makeFakeClient()
+  const lead = await seedLead(client)
+  await seedCandidate(client, lead.id, { industry_guess: 'works', business_description: null, canonical_name: 'یک کسب‌وکار نمونه' })
+  const run = await runShadowOutreachCycle(client, { runType: 'manual' })
+  assert.equal(run.suggestions_created, 1)
+  const suggestion = client.tables.prospect_outreach_suggestions[0]
+  assert.doesNotMatch(suggestion.message_draft, /works/)
+  assert.equal(suggestion.evidence_snapshot.rawIndustryGuess, 'works', 'the raw value is still kept internally for diagnostics/audit')
+  assert.deepEqual(suggestion.evidence_snapshot.industryLabelsUsed, [], 'no real target-industry label was actually matched')
+})
+
+await check('Phase 25 quality fix, end-to-end: genuine keyword evidence in business_description DOES produce the real target-industry label in the message', async () => {
+  const client = makeFakeClient()
+  const lead = await seedLead(client)
+  await seedCandidate(client, lead.id, {
+    industry_guess: 'works', // still a raw, unhelpful tag - the message must be grounded by the REAL evidence below, not this
+    canonical_name: 'کارخانه تولیدی نمونه',
+    business_description: 'تولیدکننده قطعات پلاستیکی به روش تزریق پلاستیک',
+  })
+  const run = await runShadowOutreachCycle(client, { runType: 'manual' })
+  assert.equal(run.suggestions_created, 1)
+  const suggestion = client.tables.prospect_outreach_suggestions[0]
+  // The matched industry (قالب‌گیری تزریقی) also has real productFit
+  // categories, so the composer prefers the more specific product-fit
+  // sentence over the industry sentence (existing, correct precedence) -
+  // what matters here is that the REAL match was found and tracked, never
+  // the raw "works" tag, regardless of which sentence variant wins.
+  assert.doesNotMatch(suggestion.message_draft, /works/)
+  assert.ok(suggestion.evidence_snapshot.industryLabelsUsed.includes('قالب‌گیری تزریقی'), 'the real target-industry label was matched from genuine evidence')
 })
 
 await check('a non-prospecting lead (no "prospecting" tag) is never scanned', async () => {

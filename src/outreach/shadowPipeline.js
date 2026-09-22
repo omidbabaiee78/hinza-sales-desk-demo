@@ -14,6 +14,8 @@
 import { evaluateShadowOutreachOpportunity } from './prospectingShadow.js'
 import { composeShadowOutreachMessage, composeShadowOutreachSubject } from './shadowMessageComposer.js'
 import { suggestProductFit } from '../prospecting/productFit.js'
+import { extractEvidence, matchedIndustryKeys } from '../prospecting/evidenceEngine.js'
+import { TARGET_INDUSTRIES } from '../prospecting/industryTaxonomy.js'
 import { computeDuplicateRiskLeadIds } from '../utils/leadIntelligence.js'
 
 const STALE_SCHEDULED_RUN_THRESHOLD_MS = 30 * 60 * 1000
@@ -71,12 +73,6 @@ async function fetchCandidatesByLeadId(client, leadIds) {
   const map = new Map()
   for (const row of data || []) map.set(row.promoted_lead_id, row)
   return map
-}
-
-async function fetchCandidateEvidence(client, candidateId) {
-  const { data, error } = await client.from('prospect_evidence').select('*').eq('candidate_id', candidateId)
-  if (error) throw error
-  return (data || []).map((e) => ({ evidenceType: e.evidence_type, value: e.value, weight: Number(e.weight), confidence: e.confidence }))
 }
 
 async function fetchOutreachAttemptsByLeadId(client, leadIds) {
@@ -220,13 +216,33 @@ export async function runShadowOutreachCycle(client, { runType = 'manual', creat
         if (toInsert.length >= maxSuggestions) continue
 
         let productFitProducts = []
-        let industryGuess = candidate?.industry_guess || lead.industry || null
+        // Phase 25 quality fix - customer-facing industry labels are
+        // derived ONLY from real matched evidence (industry_keyword items -
+        // an actual keyword found in the candidate's own business_
+        // description/name), via the exact same TARGET_INDUSTRIES taxonomy
+        // qualification/scoring already uses. NEVER from candidate.
+        // industry_guess or lead.industry directly - those are raw adapter/
+        // source taxonomy (e.g. a literal OSM tag value like "works") and
+        // must never reach customer-facing text (see
+        // shadowMessageComposer.js's file header). The raw value is still
+        // kept below, in evidence_snapshot only, for internal diagnostics.
+        let industryLabels = []
         if (candidate) {
-          const evidence = await fetchCandidateEvidence(client, candidate.id)
+          // Recomputed FRESH from the candidate's own stored fields, the
+          // same way runComprehensiveAudit()/promoteEligibleCandidates()
+          // already do - NOT read back from the persisted prospect_evidence
+          // rows, which drop each item's `meta` (no such column exists;
+          // matchedIndustryKeys() needs meta.industryKey to identify WHICH
+          // target industry matched, so a DB round-trip here would silently
+          // return zero industry labels even when real evidence exists).
+          const evidence = extractEvidence(candidate)
           productFitProducts = suggestProductFit(evidence).products
+          industryLabels = matchedIndustryKeys(evidence)
+            .map((key) => TARGET_INDUSTRIES.find((i) => i.key === key)?.label)
+            .filter(Boolean)
         }
 
-        const { message, evidenceUsed } = composeShadowOutreachMessage({ lead, industryGuess, productFitProducts })
+        const { message, evidenceUsed } = composeShadowOutreachMessage({ lead, industryLabels, productFitProducts })
         const subject = evaluation.channel === 'email' ? composeShadowOutreachSubject(lead) : null
 
         toInsert.push({
@@ -245,7 +261,10 @@ export async function runShadowOutreachCycle(client, { runType = 'manual', creat
           evidence_snapshot: {
             overallScore: candidate?.overall_score ?? null,
             confidence: candidate?.confidence ?? null,
-            industryGuess,
+            // Raw, UNSANITIZED source value - diagnostics/audit only, never
+            // shown to a customer (see the header comment above).
+            rawIndustryGuess: candidate?.industry_guess ?? null,
+            industryLabelsUsed: industryLabels,
             productFitProducts,
             sourceUrl: candidate?.source_url ?? null,
           },
