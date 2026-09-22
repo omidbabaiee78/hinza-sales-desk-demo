@@ -18,39 +18,50 @@ import { normalizedNameKey, cleanCompanyName, extractContactNumbers, extractDoma
 //     (source.config.endpoints), never hardcoded to one host - any one
 //     mirror being down/rate-limited only ever costs that mirror's own
 //     timeout budget before moving to the next.
-//   - a 429 is a TRANSIENT/degraded provider state, never a hard failure:
-//     the FIRST 429 seen across the whole attempt sequence honors
-//     Retry-After (capped, so a misbehaving provider can never stall the
-//     whole run) or waits ~30s, then retries that same endpoint exactly
-//     once - never more than one retry, never a tight loop. If a LATER
-//     endpoint also 429s, no further waiting happens - we just move on
-//     (the retry budget is spent once per discover()/healthCheck() call).
 //   - every request carries a descriptive User-Agent, per Overpass's own
 //     usage expectations.
 //   - all configured keywords are combined into ONE regex alternation in
 //     ONE query - never one HTTP request per keyword.
 //   - requests are always sequential, never Promise.all'd in parallel -
 //     this is shared public infrastructure, not ours to hammer.
+//   - a 429 is a TRANSIENT/degraded provider state, never a hard failure -
+//     but we never sit on our hands waiting for a slow/misbehaving mirror.
+//     During discover(), a SHORT, EXPLICIT Retry-After is honored (one
+//     retry, same endpoint, budget spent once per call) - anything longer,
+//     or no Retry-After at all, fails over to the next endpoint immediately.
+//     During healthCheck() we never wait on a 429 at all - it is a cheap,
+//     frequent probe and must fail over instantly.
+//   - on any failure (network error, timeout, non-2xx, 429), a short
+//     per-endpoint outcome is recorded (e.g. "overpass-api.de: timeout")
+//     so a fully-failed attempt reports which mirrors were tried and how
+//     each one failed, not just the last error.
 // ---------------------------------------------------------------------------
 
+// overpass.kumi.systems was retired - replaced with overpass.private.coffee.
+// Order matters: earlier entries are tried first.
 const DEFAULT_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
 ]
 
 const DEFAULT_KEYWORDS = ['پلاستیک', 'پلیمر', 'مستربچ']
 const DEFAULT_COUNTRY_CODE = 'IR'
 const DEFAULT_LIMIT = 80
+
+// Per-endpoint HTTP timeouts. Kept comfortably below any caller-side budget
+// (the pipeline isolates one source's failure from the rest of a run) so a
+// single slow mirror never eats more than its own share before failover.
 const OVERPASS_TIMEOUT_SECONDS = 25
-const DISCOVER_FETCH_TIMEOUT_MS = 20000
-const HEALTH_CHECK_FETCH_TIMEOUT_MS = 8000
-// Retry-After is honored but always capped - a provider asking for an
-// unreasonably long wait must never be allowed to stall the whole
-// discovery run (which has its own, much larger, set of other sources
-// still waiting their turn).
-const RATE_LIMIT_WAIT_CAP_MS = 30000
-const DEFAULT_RATE_LIMIT_WAIT_MS = 30000
+const DISCOVER_FETCH_TIMEOUT_MS = 28000
+const HEALTH_CHECK_FETCH_TIMEOUT_MS = 14000
+
+// A Retry-After is only ever honored during discover() when it's short
+// enough that waiting is still cheaper than just moving on - never the
+// unbounded/long waits a provider might ask for. healthCheck() never
+// honors Retry-After at all (see ALLOW_RETRY_AFTER below).
+const REASONABLE_RETRY_AFTER_CAP_MS = 10000
+
 const USER_AGENT = 'HinzaProspecting/1.0 (+https://hinzapolymer.com)'
 const HEALTH_CHECK_QUERY = '[out:json][timeout:5];out count;'
 
@@ -96,14 +107,17 @@ function validateConfig(config) {
   return null
 }
 
+// Raw Retry-After parse, no capping - the caller decides what "reasonable"
+// means for its own context (discover() caps it, healthCheck() never
+// honors it at all).
 function parseRetryAfterMs(headerValue) {
   if (!headerValue) return null
   const seconds = Number(headerValue)
-  if (Number.isFinite(seconds)) return Math.min(Math.max(seconds, 0) * 1000, RATE_LIMIT_WAIT_CAP_MS)
+  if (Number.isFinite(seconds)) return Math.max(seconds, 0) * 1000
   const dateMs = Date.parse(headerValue)
   if (!Number.isNaN(dateMs)) {
     const diffMs = dateMs - Date.now()
-    return diffMs > 0 ? Math.min(diffMs, RATE_LIMIT_WAIT_CAP_MS) : 0
+    return diffMs > 0 ? diffMs : 0
   }
   return null
 }
@@ -112,11 +126,27 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function hostLabel(endpoint) {
+  try {
+    return new URL(endpoint).hostname
+  } catch {
+    return endpoint
+  }
+}
+
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error(`درخواست به ${url} بیش از ${timeoutMs} میلی‌ثانیه طول کشید.`)), timeoutMs)
+  const timeoutError = new Error(`درخواست به ${url} بیش از ${timeoutMs} میلی‌ثانیه طول کشید.`)
+  timeoutError.isTimeout = true
+  const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs)
   try {
     return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    // Some runtimes reject with a generic AbortError/DOMException instead of
+    // propagating the abort reason itself - normalize either way so timeout
+    // diagnostics are never misreported as a plain network error.
+    if (controller.signal.aborted) throw timeoutError
+    throw err
   } finally {
     clearTimeout(timer)
   }
@@ -137,47 +167,73 @@ function postOnce(endpoint, query, timeoutMs) {
   )
 }
 
+function describeOutcome(err, response) {
+  if (response) return response.status === 429 ? '429' : String(response.status)
+  if (err?.isTimeout) return 'timeout'
+  const message = err?.message || 'خطای ناشناخته'
+  return message.length > 80 ? `${message.slice(0, 80)}…` : message
+}
+
 // Sequential (never parallel) attempt across the endpoint pool. Returns
-// { json, endpoint, rateLimited } on success; throws an Error with a
-// `.rateLimited` flag set when every endpoint that responded did so with
-// 429 (as opposed to being simply unreachable/erroring).
-async function postOverpassQuery(query, { endpoints, timeoutMs }) {
-  let lastError = null
+// { json, endpoint, rateLimited, attempts } on success - `attempts` lists
+// any endpoints that failed BEFORE the one that succeeded, in the same
+// "host: outcome" shape used on total failure, for callers that want to
+// log a partial-degradation trail even when the call ultimately succeeded.
+// Throws an Error with `.rateLimited` and `.attempts` set when every
+// endpoint fails; the thrown message itself already includes the
+// per-endpoint summary, so callers never need to re-derive it.
+async function postOverpassQuery(query, { endpoints, timeoutMs, allowRetryAfter, retryAfterCapMs = 0 }) {
+  const attempts = []
   let sawRateLimit = false
-  let usedRetryBudget = false
+  let retryUsed = false
 
   for (const endpoint of endpoints) {
+    let response
     try {
-      let response = await postOnce(endpoint, query, timeoutMs)
+      response = await postOnce(endpoint, query, timeoutMs)
+    } catch (err) {
+      attempts.push(`${hostLabel(endpoint)}: ${describeOutcome(err)}`)
+      continue
+    }
 
-      if (response.status === 429) {
-        sawRateLimit = true
-        if (!usedRetryBudget) {
-          usedRetryBudget = true
-          const retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After')) ?? DEFAULT_RATE_LIMIT_WAIT_MS
+    if (response.status === 429) {
+      sawRateLimit = true
+      let retried = false
+
+      if (allowRetryAfter && !retryUsed) {
+        const retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After'))
+        if (retryAfterMs !== null && retryAfterMs <= retryAfterCapMs) {
+          retryUsed = true
+          retried = true
           await sleep(retryAfterMs)
-          response = await postOnce(endpoint, query, timeoutMs)
-          if (response.status === 429) sawRateLimit = true
+          try {
+            response = await postOnce(endpoint, query, timeoutMs)
+            if (response.status === 429) sawRateLimit = true
+          } catch (err) {
+            attempts.push(`${hostLabel(endpoint)}: ${describeOutcome(err)} (پس از تلاش دوباره)`)
+            continue
+          }
         }
       }
 
       if (response.status === 429) {
-        lastError = new Error(`منبع Overpass (${endpoint}) در وضعیت محدودیت نرخ درخواست (429) قرار دارد.`)
+        attempts.push(`${hostLabel(endpoint)}: 429${retried ? ' (پس از تلاش دوباره)' : ''}`)
         continue
       }
-      if (!response.ok) {
-        lastError = new Error(`Overpass API (${endpoint}) پاسخ ${response.status} داد.`)
-        continue
-      }
-
-      return { json: await response.json(), endpoint, rateLimited: sawRateLimit }
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err))
     }
+
+    if (!response.ok) {
+      attempts.push(`${hostLabel(endpoint)}: ${describeOutcome(null, response)}`)
+      continue
+    }
+
+    return { json: await response.json(), endpoint, rateLimited: sawRateLimit, attempts }
   }
 
-  const error = lastError || new Error('هیچ‌کدام از آدرس‌های Overpass API در دسترس نبودند.')
+  const summary = attempts.join('، ')
+  const error = new Error(`هیچ‌کدام از آدرس‌های Overpass API در دسترس نبودند: ${summary}`)
   error.rateLimited = sawRateLimit
+  error.attempts = attempts
   throw error
 }
 
@@ -212,10 +268,15 @@ export const osmOverpassAdapter = {
       throw new Error('پیکربندی منبع OSM ناقص است: هیچ کلیدواژه‌ای تعریف نشده است.')
     }
 
-    const { json } = await postOverpassQuery(buildDiscoverQuery({ keywords, countryCode, limit }), {
+    const { json, endpoint, attempts } = await postOverpassQuery(buildDiscoverQuery({ keywords, countryCode, limit }), {
       endpoints,
       timeoutMs: DISCOVER_FETCH_TIMEOUT_MS,
+      allowRetryAfter: true,
+      retryAfterCapMs: REASONABLE_RETRY_AFTER_CAP_MS,
     })
+    if (attempts.length > 0) {
+      console.warn(`prospect-discovery/osmOverpass: succeeded via ${endpoint} after failover (${attempts.join('، ')})`)
+    }
     return (json?.elements || []).filter((el) => el?.tags?.name)
   },
 
@@ -249,7 +310,9 @@ export const osmOverpassAdapter = {
 
   // Deliberately NOT the same query discover() runs - a tiny `out count`
   // query, cheap enough to call often without contributing to any
-  // provider's rate limiting on its own.
+  // provider's rate limiting on its own. Never waits on a 429 - a health
+  // probe that itself sits idle for 30s defeats its own purpose - it just
+  // fails over to the next mirror immediately.
   async healthCheck(source) {
     const config = source?.config || {}
     const configError = validateConfig(config)
@@ -259,15 +322,17 @@ export const osmOverpassAdapter = {
     const endpoints = resolveEndpoints(config)
 
     try {
-      const { endpoint, rateLimited } = await postOverpassQuery(HEALTH_CHECK_QUERY, {
+      const { endpoint, rateLimited, attempts } = await postOverpassQuery(HEALTH_CHECK_QUERY, {
         endpoints,
         timeoutMs: HEALTH_CHECK_FETCH_TIMEOUT_MS,
+        allowRetryAfter: false,
       })
       if (rateLimited) {
+        const suffix = attempts.length > 0 ? ` (${attempts.join('، ')})` : ''
         return {
           ok: false,
           status: 'degraded',
-          message: `منبع در دسترس است اما با محدودیت نرخ درخواست مواجه شد (نهایتاً از ${endpoint} پاسخ گرفته شد).`,
+          message: `منبع در دسترس است اما با محدودیت نرخ درخواست مواجه شد (نهایتاً از ${endpoint} پاسخ گرفته شد)${suffix}.`,
         }
       }
       return { ok: true, status: 'healthy', message: `Overpass API در دسترس است (${endpoint}).` }
@@ -276,10 +341,12 @@ export const osmOverpassAdapter = {
         return {
           ok: false,
           status: 'degraded',
-          message: 'همه آدرس‌های پیکربندی‌شده در حال حاضر محدودیت نرخ درخواست (429) دارند - بعداً دوباره تلاش کنید.',
+          message: `همه آدرس‌های پیکربندی‌شده در حال حاضر محدودیت نرخ درخواست (429) دارند - بعداً دوباره تلاش کنید: ${(err.attempts || []).join('، ')}`,
         }
       }
       return { ok: false, status: 'unavailable', message: `Overpass API در دسترس نیست: ${err.message}` }
     }
   },
 }
+
+export const __testing = { DEFAULT_ENDPOINTS }

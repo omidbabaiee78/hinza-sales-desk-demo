@@ -37,8 +37,16 @@ export default function AdminProspectingPage() {
     loading,
     running,
     runningSourceId,
+    reEvaluatingAll,
+    dryRunLoading,
+    dryRunResult,
+    verifyLoading,
+    verifyResult,
+    promoteEligibleLoading,
+    promoteEligibleResult,
     error,
     actionError,
+    actionNotice,
     uploadAndRun,
     promote,
     reject,
@@ -48,10 +56,61 @@ export default function AdminProspectingPage() {
     toggleSource,
     testSourceHealth,
     runSourceNow,
+    reEvaluateAllManualReview,
+    runDryRunQualification,
+    runVerifyQualificationState,
+    runPromoteEligibleCandidates,
   } = useProspecting()
 
   const [activeTab, setActiveTab] = useState('top')
   const [uploading, setUploading] = useState(false)
+  const [copyNotice, setCopyNotice] = useState('')
+  const [verifyCopyNotice, setVerifyCopyNotice] = useState('')
+  const [promoteEligibleCopyNotice, setPromoteEligibleCopyNotice] = useState('')
+
+  // "Controlled Promotion Acceptance" round - this button creates REAL
+  // sales_leads rows, unlike every read-only audit button above it. A
+  // native confirm() is the one deliberate exception to "never block on a
+  // dialog" in this admin UI - exactly the kind of hard-to-reverse,
+  // production-write action worth one extra explicit click to avoid.
+  function handlePromoteEligibleClick() {
+    const eligibleCount = verifyResult?.autoPromotableCount
+    const confirmed = window.confirm(
+      `این عملیات، تمام نامزدهای واجد شرایط تبدیل خودکار (طبق آخرین بازبینی جامع${
+        typeof eligibleCount === 'number' ? `: ${eligibleCount} مورد` : ''
+      }) را به‌صورت واقعی وارد بانک لید (Lead Bank) می‌کند. این کار پیام/تماسی ارسال نمی‌کند، اما ایجاد لید یک نوشتار واقعی و برگشت‌ناپذیر در دیتابیس است. ادامه می‌دهید؟`,
+    )
+    if (!confirmed) return
+    setPromoteEligibleCopyNotice('')
+    runPromoteEligibleCandidates()
+  }
+
+  async function handleCopyPromoteEligible() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(promoteEligibleResult, null, 2))
+      setPromoteEligibleCopyNotice('کپی شد.')
+    } catch {
+      setPromoteEligibleCopyNotice('کپی خودکار ممکن نشد - متن را به‌صورت دستی انتخاب و کپی کنید.')
+    }
+  }
+
+  async function handleCopyDryRun() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(dryRunResult, null, 2))
+      setCopyNotice('کپی شد.')
+    } catch {
+      setCopyNotice('کپی خودکار ممکن نشد - متن را به‌صورت دستی انتخاب و کپی کنید.')
+    }
+  }
+
+  async function handleCopyVerify() {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(verifyResult, null, 2))
+      setVerifyCopyNotice('کپی شد.')
+    } catch {
+      setVerifyCopyNotice('کپی خودکار ممکن نشد - متن را به‌صورت دستی انتخاب و کپی کنید.')
+    }
+  }
 
   const handlers = { promote, reject, markDuplicate, updateFields, reEvaluate }
 
@@ -103,6 +162,7 @@ export default function AdminProspectingPage() {
 
       <ErrorBanner message={error} />
       {actionError && <ErrorBanner message={actionError} />}
+      {actionNotice && <p className="lead-form-hint">{actionNotice}</p>}
 
       <div className="today-summary-grid">
         <div className="today-summary-card tone-contacted">
@@ -145,6 +205,153 @@ export default function AdminProspectingPage() {
           ))}
         </div>
       </div>
+
+      {!loading && activeTab === 'manual_review' && (
+        <div className="page-toolbar" style={{ marginBottom: 8 }}>
+          {/* Phase 23D, item 10: rescore all EXISTING manual_review
+              candidates under Smart Qualification 2.0 - safe/idempotent,
+              never promotes or deletes anything, see
+              reEvaluateManualReviewCandidates() in discoveryPipeline.js. */}
+          <button type="button" className="btn-link" disabled={reEvaluatingAll} onClick={reEvaluateAllManualReview}>
+            {reEvaluatingAll ? 'در حال ارزیابی مجدد...' : 'ارزیابی مجدد همه موارد نیازمند بررسی (Smart Qualification 2.0)'}
+          </button>
+          {/* Dry run: calculates what Smart Qualification 2.0 WOULD do to
+              every current manual_review candidate WITHOUT writing
+              anything to the database (dryRunQualification() in
+              discoveryPipeline.js / mode:'dry_run_qualification' in the
+              Edge Function). Purely for review - copy the JSON output and
+              share it, nothing here changes any candidate's status. */}
+          <button
+            type="button"
+            className="btn-link"
+            disabled={dryRunLoading}
+            onClick={() => {
+              setCopyNotice('')
+              runDryRunQualification()
+            }}
+          >
+            {dryRunLoading ? 'در حال محاسبه پیش‌نمایش...' : 'پیش‌نمایش Smart Qualification 2.0 (بدون تغییر در دیتابیس)'}
+          </button>
+          {/* Phase 23D-FINAL.1: the ONE comprehensive, read-only audit -
+              ALWAYS covers manual_review + rejected + qualified
+              server-side (never just manual_review), and always reports
+              the full real database status distribution too
+              (databaseStatusCounts, auditedCount, excludedCount) so its
+              scope is self-evident from the result itself, not from which
+              button was clicked (runComprehensiveAudit() /
+              mode:'comprehensive_audit'). Safe to run before or after the
+              re-evaluate button above - never writes anything itself. */}
+          <button
+            type="button"
+            className="btn-link"
+            disabled={verifyLoading}
+            onClick={() => {
+              setVerifyCopyNotice('')
+              runVerifyQualificationState()
+            }}
+          >
+            {verifyLoading ? 'در حال اجرای بازبینی جامع...' : 'بازبینی جامع (manual_review + رد شده + واجد شرایط) — بدون نوشتن در دیتابیس'}
+          </button>
+          {/* "Controlled Promotion Acceptance" round - the ONE real-write
+              bulk action on this page: promotes every candidate the
+              comprehensive audit currently reports as auto-promotable into
+              a real sales_leads row (mode:'promote_eligible_candidates').
+              Idempotent (see promoteEligibleCandidates() in
+              discoveryPipeline.js) but NOT read-only - guarded by its own
+              confirm() dialog, styled distinctly, and deliberately never
+              auto-triggered. */}
+          <button
+            type="button"
+            className="btn-link-danger"
+            disabled={promoteEligibleLoading}
+            onClick={handlePromoteEligibleClick}
+          >
+            {promoteEligibleLoading
+              ? 'در حال تبدیل نامزدهای واجد شرایط به سرنخ...'
+              : 'تبدیل گروهی نامزدهای واجد شرایط به سرنخ (نوشتار واقعی در دیتابیس)'}
+          </button>
+        </div>
+      )}
+
+      {!loading && activeTab === 'manual_review' && dryRunResult && (
+        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
+          <p className="lead-form-hint">
+            پیش‌نمایش (dry run) - هیچ تغییری در دیتابیس اعمال نشد. مجموع: {dryRunResult.total} | واجد شرایط:{' '}
+            {dryRunResult.counts?.qualified ?? 0} | نیازمند بررسی: {dryRunResult.counts?.manual_review ?? 0} | رد شده:{' '}
+            {dryRunResult.counts?.rejected ?? 0} | قابل تبدیل خودکار: {dryRunResult.autoPromotableCount ?? 0}
+            {dryRunResult.errors ? ` | خطا: ${dryRunResult.errors}` : ''}
+          </p>
+          {dryRunResult.buyerFitCounts && (
+            <p className="lead-form-hint">
+              Buyer Fit — بالا: {dryRunResult.buyerFitCounts.high ?? 0} | متوسط: {dryRunResult.buyerFitCounts.medium ?? 0} | کم:{' '}
+              {dryRunResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {dryRunResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
+              {dryRunResult.buyerFitCounts.unknown ?? 0}
+            </p>
+          )}
+          <button type="button" className="btn-link" onClick={handleCopyDryRun}>
+            کپی کردن نتیجه کامل (JSON)
+          </button>
+          {copyNotice && <span style={{ marginInlineStart: 8 }}>{copyNotice}</span>}
+          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+            {JSON.stringify(dryRunResult, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {!loading && activeTab === 'manual_review' && verifyResult && (
+        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
+          <p className="lead-form-hint">
+            بازبینی جامع - هیچ تغییری در دیتابیس اعمال نشد. وضعیت واقعی دیتابیس (databaseStatusCounts): واجد شرایط{' '}
+            {verifyResult.databaseStatusCounts?.qualified ?? 0} | رد شده {verifyResult.databaseStatusCounts?.rejected ?? 0} | نیازمند بررسی{' '}
+            {verifyResult.databaseStatusCounts?.manual_review ?? 0} | تکراری {verifyResult.databaseStatusCounts?.duplicate ?? 0} | تبدیل‌شده{' '}
+            {verifyResult.databaseStatusCounts?.promoted ?? 0}
+          </p>
+          <p className="lead-form-hint">
+            بررسی‌شده (auditedCount): {verifyResult.auditedCount ?? 0} = manual_review+رد شده+واجد شرایط | مستثنی‌شده (excludedCount):{' '}
+            {verifyResult.excludedCount ?? 0} (تکراری+تبدیل‌شده) | قابل تبدیل خودکار: {verifyResult.autoPromotableCount ?? 0} | تعارض منطقی
+            (logicalConflictCount): {verifyResult.logicalConflictCount ?? 0}
+            {verifyResult.errors ? ` | خطا: ${verifyResult.errors}` : ''}
+          </p>
+          <p className="lead-form-hint">
+            هویت تایید‌شده (verified): {verifyResult.identityVerifiedCount ?? 0} | هویت محتمل (probable): {verifyResult.identityProbableCount ?? 0} |
+            هویت نامشخص (unresolved): {verifyResult.identityUnresolvedCount ?? 0} | تلاش برای بررسی وب‌سایت:{' '}
+            {verifyResult.identityVerificationAttempted ?? 0} | نیازمند غنی‌سازی: {verifyResult.enrichmentNeededCount ?? 0} | نجات‌یافته از رد:{' '}
+            {verifyResult.rescuedFalseNegatives ?? 0} | تنزل‌یافته از واجد شرایط: {verifyResult.downgradedFalsePositives ?? 0}
+          </p>
+          {verifyResult.buyerFitCounts && (
+            <p className="lead-form-hint">
+              Buyer Fit — بالا: {verifyResult.buyerFitCounts.high ?? 0} | متوسط: {verifyResult.buyerFitCounts.medium ?? 0} | کم:{' '}
+              {verifyResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {verifyResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
+              {verifyResult.buyerFitCounts.unknown ?? 0}
+            </p>
+          )}
+          <button type="button" className="btn-link" onClick={handleCopyVerify}>
+            کپی کردن نتیجه کامل (JSON)
+          </button>
+          {verifyCopyNotice && <span style={{ marginInlineStart: 8 }}>{verifyCopyNotice}</span>}
+          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+            {JSON.stringify(verifyResult, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {!loading && activeTab === 'manual_review' && promoteEligibleResult && (
+        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
+          <p className="lead-form-hint">
+            تبدیل گروهی — این یک نوشتار واقعی بود. واجد شرایط قبل از اجرا: {promoteEligibleResult.eligibleBefore ?? 0} | تبدیل‌شده به لید:{' '}
+            {promoteEligibleResult.promoted ?? 0} | از قبل تبدیل‌شده: {promoteEligibleResult.alreadyPromoted ?? 0} | رد‌شده به‌دلیل تطابق قبلی:{' '}
+            {promoteEligibleResult.skippedExistingMatch ?? 0} | دیگر واجد شرایط نبود: {promoteEligibleResult.noLongerEligible ?? 0} | خطا:{' '}
+            {promoteEligibleResult.failed ?? 0}
+          </p>
+          <button type="button" className="btn-link" onClick={handleCopyPromoteEligible}>
+            کپی کردن نتیجه کامل (JSON)
+          </button>
+          {promoteEligibleCopyNotice && <span style={{ marginInlineStart: 8 }}>{promoteEligibleCopyNotice}</span>}
+          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+            {JSON.stringify(promoteEligibleResult, null, 2)}
+          </pre>
+        </div>
+      )}
 
       {loading && <p className="profile-empty">در حال بارگذاری...</p>}
 

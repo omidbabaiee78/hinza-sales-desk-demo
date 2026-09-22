@@ -31,6 +31,13 @@ export const EVIDENCE_TYPE_LABELS = {
   mobile_contact: 'موبایل تماس',
   source_directory_listing: 'ثبت در فهرست منبع',
   generic_manufacturing_signal: 'نشانه عمومی تولید',
+  direct_company_site: 'وب‌سایت مستقیم شرکت',
+  non_company_content: 'محتوای غیرشرکتی (مقاله/فهرست/شبکه اجتماعی/...)',
+  query_or_label_hint: 'برچسب/عبارت جستجوی مرتبط',
+  non_buyer_organization: 'سازمان غیرمصرف‌کننده (انجمن/تامین‌کننده تجهیزات/پژوهشی)',
+  buyer_fit_assessment: 'ارزیابی تناسب به‌عنوان مشتری (Buyer Fit)',
+  structured_industrial_signal: 'شواهد ساختاریافته صنعتی (از منبع)',
+  business_role_assessment: 'نقش کسب‌وکار (Business Role)',
 }
 export function evidenceTypeLabel(type) {
   return EVIDENCE_TYPE_LABELS[type] || type

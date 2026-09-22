@@ -1,6 +1,7 @@
 import { uploadedDatasetAdapter } from './uploadedDataset.js'
 import { genericHttpDirectoryAdapter } from './genericHttpDirectory.js'
 import { osmOverpassAdapter } from './osmOverpass.js'
+import { serperSearchAdapter } from './serperSearch.js'
 
 // ---------------------------------------------------------------------------
 // Adapter registry - the discovery pipeline only ever looks a source up by
@@ -20,6 +21,7 @@ const ADAPTERS_BY_TYPE = {
   uploaded_dataset: uploadedDatasetAdapter,
   custom_api: genericHttpDirectoryAdapter,
   public_directory: osmOverpassAdapter,
+  search_result: serperSearchAdapter,
 }
 
 export function getSourceAdapter(sourceType) {

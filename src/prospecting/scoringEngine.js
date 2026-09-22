@@ -47,15 +47,20 @@ export function computeOverallScore(relevanceScore, contactQualityScore) {
 // Confidence is never higher than the evidence actually supports - zero
 // distinct matched industries can never be "high", and any negative signal
 // caps it at "low" regardless of score.
+//
+// Phase 23D-FINAL.1, section 8 (CONFIDENCE TYPE INTEGRITY): this used to
+// return the literal string 'manual_review' for the "zero evidence" case -
+// a STATUS value leaking into the confidence vocabulary, which must be
+// exactly {high, medium, low} and nothing else (status is qualification.js's
+// job entirely; this function only ever describes evidence strength). Zero
+// evidence of any kind is now 'low' - the correct floor of that same
+// three-value scale, not a fourth, semantically different value.
 export function computeConfidence({ overallScore, evidence }) {
   const industryCount = matchedIndustryKeys(evidence).length
   const hasGenericSignal = evidence.some((e) => e.evidenceType === 'generic_manufacturing_signal')
+  const hasStructuredSignal = evidence.some((e) => e.evidenceType === 'structured_industrial_signal')
   const hasNegative = evidence.some((e) => e.evidenceType === 'negative_signal')
-  // A generic (name-only) manufacturing signal is real evidence - enough to
-  // avoid the forced "manual_review, no evidence at all" floor - but it can
-  // never alone reach "high" (that still requires >=2 SPECIFIC matched
-  // industries, checked below).
-  if (industryCount === 0 && !hasGenericSignal) return 'manual_review'
+  if (industryCount === 0 && !hasGenericSignal && !hasStructuredSignal) return 'low'
   if (hasNegative) return 'low'
 
   const cfg = SCORING_CONFIG.confidence
@@ -73,8 +78,9 @@ function industryLabelsFrom(evidence) {
 // actually found.
 export function buildReasonFa(evidence) {
   const parts = []
+  if (evidence.some((e) => e.evidenceType === 'direct_company_site')) parts.push('وب‌سایت مستقیم شرکت')
   const industryLabels = industryLabelsFrom(evidence)
-  if (industryLabels.length > 0) parts.push(`فعالیت احتمالی در حوزه ${industryLabels.join('، ')}`)
+  if (industryLabels.length > 0) parts.push(`شواهد صریح فعالیت در حوزه ${industryLabels.join('، ')}`)
   else if (evidence.some((e) => e.evidenceType === 'generic_manufacturing_signal')) {
     parts.push('نام کسب‌وکار به تولید مواد پلیمری اشاره دارد (بدون جزئیات دقیق‌تر)')
   }

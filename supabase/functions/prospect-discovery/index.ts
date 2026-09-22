@@ -42,7 +42,7 @@
 // admin-JWT/cron-secret authentication above, which is unchanged.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { runDiscovery, testSource } from '../../../src/prospecting/discoveryPipeline.js'
+import { runDiscovery, testSource, dryRunQualification, runComprehensiveAudit, promoteEligibleCandidates } from '../../../src/prospecting/discoveryPipeline.js'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -131,21 +131,59 @@ Deno.serve(async (req) => {
   // Body: { sourceId, mode }. sourceId omitted/null runs every enabled
   // source (what the daily schedule always does). mode: 'health' only ever
   // runs the adapter's own healthCheck() - no candidates are
-  // discovered/written - used by the admin UI's "تست منبع" button;
-  // anything else (including the cron path, which never sends `mode`) does
+  // discovered/written - used by the admin UI's "تست منبع" button.
+  // mode: 'dry_run_qualification' (Phase 23D) recomputes Smart
+  // Qualification 2.0 against every EXISTING manual_review candidate and
+  // returns the predictions - a pure read + in-memory compute, no database
+  // write of any kind, no promotion, sourceId is irrelevant/ignored for it.
+  // mode: 'verify_qualification_state' (Phase 23D.3) and mode:
+  // 'comprehensive_audit' (Phase 23D-FINAL.1) are now BOTH just aliases for
+  // the one, single comprehensive audit (runComprehensiveAudit() -
+  // discoveryPipeline.js) - it always covers manual_review + rejected +
+  // qualified server-side, always reports the full real database
+  // distribution too (databaseStatusCounts, including duplicate/promoted),
+  // and never writes anything. Kept as two names deliberately: the exact
+  // "which button/mode did you use" ambiguity between a narrower,
+  // manual_review-only query and this one was itself the root cause of a
+  // prior audit-coverage bug report - there is now only ONE real query
+  // behind either name.
+  // mode: 'promote_eligible_candidates' (Controlled Promotion Acceptance
+  // round) - the ONE bulk-promotion action: re-verifies and promotes every
+  // candidate the comprehensive audit currently reports as
+  // predicted_auto_promotable=true (see promoteEligibleCandidates() -
+  // discoveryPipeline.js). This IS a real write (creates sales_leads rows,
+  // updates prospect_candidates.status) - deliberately admin-JWT ONLY,
+  // never reachable via the cron secret (checked right below), so no
+  // future scheduled run can silently start bulk-promoting without a human
+  // in the loop clicking the button.
+  //
+  // Anything else (including the cron path, which never sends `mode`) does
   // a full discovery run.
   let sourceId: string | null = null
   let mode: string = 'run'
   try {
     const body = await req.json().catch(() => ({}))
     sourceId = body?.sourceId || null
-    mode = body?.mode === 'health' ? 'health' : 'run'
+    mode =
+      body?.mode === 'health'
+        ? 'health'
+        : body?.mode === 'dry_run_qualification'
+          ? 'dry_run_qualification'
+          : body?.mode === 'verify_qualification_state' || body?.mode === 'comprehensive_audit'
+            ? 'comprehensive_audit'
+            : body?.mode === 'promote_eligible_candidates'
+              ? 'promote_eligible_candidates'
+              : 'run'
   } catch {
     sourceId = null
   }
 
   if (mode === 'health' && !sourceId) {
     return jsonResponse({ ok: false, error: 'source_id_required_for_health_check' }, 400)
+  }
+  if (mode === 'promote_eligible_candidates' && auth.actorType !== 'admin') {
+    console.error('prospect-discovery: rejected promote_eligible_candidates from a non-admin actor', auth.actorType)
+    return jsonResponse({ ok: false, error: 'unauthorized' }, 401)
   }
 
   console.log('prospect-discovery: start', `actor=${auth.actorType}`, `mode=${mode}`, sourceId ? `source=${sourceId}` : 'all sources')
@@ -156,6 +194,46 @@ Deno.serve(async (req) => {
       const durationMs = Date.now() - startedAt
       console.log('prospect-discovery: health check finished', JSON.stringify(result))
       return jsonResponse({ ok: true, mode: 'health', result, duration_ms: durationMs })
+    }
+
+    if (mode === 'dry_run_qualification') {
+      const result = await dryRunQualification(client)
+      const durationMs = Date.now() - startedAt
+      console.log('prospect-discovery: dry-run finished', JSON.stringify({ total: result.total, counts: result.counts, errors: result.errors }))
+      return jsonResponse({ ok: true, mode: 'dry_run_qualification', ...result, duration_ms: durationMs })
+    }
+
+    if (mode === 'comprehensive_audit') {
+      const result = await runComprehensiveAudit(client)
+      const durationMs = Date.now() - startedAt
+      console.log(
+        'prospect-discovery: comprehensive audit finished',
+        JSON.stringify({
+          databaseStatusCounts: result.databaseStatusCounts,
+          auditedCount: result.auditedCount,
+          excludedCount: result.excludedCount,
+          errors: result.errors,
+          logicalConflictCount: result.logicalConflictCount,
+        }),
+      )
+      return jsonResponse({ ok: true, mode: 'comprehensive_audit', ...result, duration_ms: durationMs })
+    }
+
+    if (mode === 'promote_eligible_candidates') {
+      const result = await promoteEligibleCandidates(client, { createdBy: auth.userId })
+      const durationMs = Date.now() - startedAt
+      console.log(
+        'prospect-discovery: promote_eligible_candidates finished',
+        JSON.stringify({
+          eligibleBefore: result.eligibleBefore,
+          promoted: result.promoted,
+          alreadyPromoted: result.alreadyPromoted,
+          skippedExistingMatch: result.skippedExistingMatch,
+          noLongerEligible: result.noLongerEligible,
+          failed: result.failed,
+        }),
+      )
+      return jsonResponse({ ok: true, mode: 'promote_eligible_candidates', ...result, duration_ms: durationMs })
     }
 
     const runType = auth.actorType === 'cron' ? 'scheduled' : 'manual'

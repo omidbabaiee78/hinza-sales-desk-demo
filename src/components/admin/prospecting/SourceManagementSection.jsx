@@ -42,10 +42,23 @@ export default function SourceManagementSection({ sources, onToggle, onTest, onR
         )}
         {sources.map((source) => {
           const liveResult = testResults[source.id]
+          const isCredentialMissing =
+            liveResult?.status === 'credential_required' || (source.last_error || '').startsWith('credential_required')
           const isHealthy = liveResult ? liveResult.ok : !source.last_error
+          // Secondary/experimental tag: config.tier is the explicit marker
+          // (see discoveryPipeline.js's ensureDefaultSources for OSM), a
+          // public_directory source_type with no tier is still treated as
+          // secondary - OSM's public Overpass mirrors proved too unreliable
+          // (Phase 23B/C) to be a primary production source.
+          const isSecondary = source.config?.tier === 'secondary' || source.source_type === 'public_directory'
           return (
             <tr key={source.id}>
-              <td>{source.name}</td>
+              <td>
+                {source.name}
+                {isSecondary && (
+                  <span style={{ marginInlineStart: 6, fontSize: '0.75em', color: 'var(--text-muted, #888)' }}>(ثانویه/آزمایشی)</span>
+                )}
+              </td>
               <td>{sourceTypeLabel(source.source_type)}</td>
               <td>
                 <label className="automation-rule-toggle">
@@ -53,8 +66,13 @@ export default function SourceManagementSection({ sources, onToggle, onTest, onR
                   {source.enabled ? 'فعال' : 'غیرفعال'}
                 </label>
               </td>
-              <td style={{ color: isHealthy ? 'var(--status-won-text)' : 'var(--status-lost-text)', fontWeight: 600 }}>
-                {isHealthy ? '✓ سالم' : '✗ خطا'}
+              <td
+                style={{
+                  color: isCredentialMissing ? 'var(--status-offer-text, #a66a00)' : isHealthy ? 'var(--status-won-text)' : 'var(--status-lost-text)',
+                  fontWeight: 600,
+                }}
+              >
+                {isCredentialMissing ? '⚠ نیاز به کلید API' : isHealthy ? '✓ سالم' : '✗ خطا'}
               </td>
               <td>{source.last_run_at ? formatJalaliDateTime(source.last_run_at) : '—'}</td>
               <td>{liveResult?.message || source.last_error || '—'}</td>
@@ -62,11 +80,20 @@ export default function SourceManagementSection({ sources, onToggle, onTest, onR
                 <button type="button" className="btn-link" disabled={testingId === source.id} onClick={() => handleTest(source.id)}>
                   {testingId === source.id ? 'در حال تست...' : 'تست منبع'}
                 </button>
+                {/* Phase 23C fix: this must NOT also require source.enabled -
+                    clicking "اجرای این منبع" for one specific source is an
+                    explicit one-off admin action (same as "تست منبع"), never
+                    gated by whether that source participates in a bulk/daily
+                    run. Disabling this button on a disabled source silently
+                    prevented the request from ever being sent - no run row,
+                    no error, nothing (see discoveryPipeline.js's
+                    fetchRunnableSources). */}
                 <button
                   type="button"
                   className="btn-link"
-                  disabled={runningSourceId === source.id || !source.enabled}
+                  disabled={runningSourceId === source.id}
                   onClick={() => onRunNow(source.id)}
+                  title={!source.enabled ? 'این منبع غیرفعال است اما اجرای دستی همچنان انجام می‌شود.' : undefined}
                 >
                   {runningSourceId === source.id ? 'در حال اجرا...' : 'اجرای این منبع'}
                 </button>
