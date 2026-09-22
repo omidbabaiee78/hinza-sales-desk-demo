@@ -1,14 +1,14 @@
 -- Phase 25 - Autonomous Outreach SHADOW MODE: daily scheduler.
 --
--- PREPARED ONLY. NOT APPLIED. NOT ACTIVATED.
---
--- Do NOT run section 4 (the actual cron.schedule call) until:
---   1. supabase/sql/phase25_shadow_outreach.sql has been applied and
---      verified.
---   2. supabase/functions/outreach-shadow has been deployed.
---   3. A manual server-side test run (manualTest / a direct admin-triggered
---      run) has been performed and verified: zero real outbound
---      communications, dedupe/idempotency holds on a second run.
+-- Phase 25.5: ACTIVATED - all prerequisites below were verified first:
+--   1. supabase/sql/phase25_shadow_outreach.sql applied and verified.
+--   2. supabase/functions/outreach-shadow deployed (v1).
+--   3. A manual server-side test run (manualTest) was performed TWICE and
+--      verified: zero real outbound communications, dedupe/idempotency held
+--      on the second run (Phase 25 STEP 14).
+-- This activates ONLY suggestion generation - outreach_enabled stays false,
+-- and no channel adapter's execute() can be called regardless (see
+-- src/outreach/channels/*.js).
 --
 -- Same pattern as supabase/sql/phase23_prospecting_cron.sql: pg_cron ->
 -- pg_net -> the deployed Edge Function -> a secret read from Vault at call
@@ -78,21 +78,22 @@ $$;
 revoke all on function public.trigger_outreach_shadow() from public, anon, authenticated;
 
 -- =============================================================================
--- 4. DO NOT RUN YET - schedule once daily, AFTER daily prospecting.
+-- 4. Schedule once daily, AFTER daily prospecting.
 --
 -- Daily prospecting runs at 05:00 UTC (08:30 Asia/Tehran, fixed +03:30, no
--- DST - see phase23_prospecting_cron.sql). This job is offset one hour
--- later, 06:00 UTC (09:30 Asia/Tehran), so newly promoted leads from that
--- run are already in sales_leads before this scans for them (Phase 25
--- STEP 13: "Prefer running Shadow Mode after daily prospecting, with
--- sufficient delay").
+-- DST - see phase23_prospecting_cron.sql). This job is offset 30 minutes
+-- later, 05:30 UTC (09:00 Asia/Tehran, Phase 25.5), so newly promoted leads
+-- from that run are already in sales_leads before this scans for them.
+-- Verified directly against the database before choosing this expression:
+-- `current_setting('TIMEZONE')` = UTC, `current_setting('cron.timezone')` =
+-- GMT, so pg_cron evaluates this schedule in UTC/GMT - 09:00 - 03:30 = 05:30.
 -- =============================================================================
 
--- select cron.schedule(
---   'hinza-daily-outreach-shadow',
---   '0 6 * * *',
---   $$select public.trigger_outreach_shadow();$$
--- );
+select cron.schedule(
+  'hinza-daily-outreach-shadow',
+  '30 5 * * *',
+  $$select public.trigger_outreach_shadow();$$
+);
 
 -- =============================================================================
 -- Verification (once activated)
