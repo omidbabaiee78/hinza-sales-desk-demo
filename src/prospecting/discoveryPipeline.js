@@ -437,7 +437,18 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
         }
       }
 
-      return { created: false, duplicate: false, promoted: rescuePromoted, wouldPromote: rescueWouldPromote, status: rescueQualification.status }
+      // Report the TRUE final status, not the pre-promotion qualification
+      // result - promoteCandidateRow() above already flipped the row itself
+      // to 'promoted' in the database, so a run's statusCounts must reflect
+      // that too, or a same-run promotion gets silently miscounted under
+      // 'qualified' instead of 'promoted'.
+      return {
+        created: false,
+        duplicate: false,
+        promoted: rescuePromoted,
+        wouldPromote: rescueWouldPromote,
+        status: rescuePromoted ? 'promoted' : rescueQualification.status,
+      }
     }
   }
 
@@ -516,7 +527,12 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
     duplicate: false,
     promoted,
     wouldPromote,
-    status: finalStatus,
+    // Same fix as the re-discovery rescue path above: report the TRUE final
+    // status. promoteCandidateRow() above already flipped this row to
+    // 'promoted' in the database when `promoted` is true, so the run's
+    // statusCounts must say 'promoted' too, not the pre-promotion
+    // qualification status it was written with a moment earlier.
+    status: promoted ? 'promoted' : finalStatus,
     newDedupRecord: { kind: 'candidate', id: saved.row.id, keys: candidateKeys },
   }
 }

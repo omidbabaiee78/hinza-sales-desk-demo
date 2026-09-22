@@ -3105,4 +3105,54 @@ await check('Phase 24 fix (8): a manualTest-shaped run never touches any outreac
   assert.equal(run.status, 'completed')
 })
 
+// ---------------------------------------------------------------------------
+// Phase 24 follow-up fix - statusCounts must reflect the TRUE final status.
+// processCandidate() writes a candidate with status=finalStatus (e.g.
+// 'qualified') BEFORE promoteCandidateRow() runs and flips it to 'promoted' -
+// the returned `status` used to still say finalStatus even when this SAME
+// call went on to promote it a moment later, so a real-time promotion was
+// miscounted in run.summary.statusCounts under 'qualified' instead of
+// 'promoted' (candidates_promoted itself, and the actual DB write, were
+// always correct - only this one diagnostic tally was wrong).
+// ---------------------------------------------------------------------------
+
+await check('Phase 24 fix: statusCounts buckets a same-run promotion under "promoted", never under "qualified"', async () => {
+  const client = makeFakeClient()
+  const run = await runUploadedDatasetDiscovery(client, { rows: [manufacturerRow()], createdBy: 'admin-1' })
+  assert.equal(run.candidates_promoted, 1)
+  assert.equal(run.summary.statusCounts.promoted, 1, 'the newly promoted candidate must be counted under "promoted"')
+  assert.equal(run.summary.statusCounts.qualified ?? 0, 0, 'it must NOT also be counted under "qualified"')
+})
+
+await check('Phase 24 fix: statusCounts still buckets a re-discovered (rescue-path) same-run promotion under "promoted" too', async () => {
+  const client = makeFakeClient()
+  // First run: leaves the candidate in manual_review (weak evidence), never promoted.
+  const weakRow = { company_name: 'کارگاه تولیدی نمونه فاز ۲۴', business_description: 'تزریق پلاستیک برای قطعات ساده', mobile: '09121112233', source_external_id: 'rescue-ext-1' }
+  await runUploadedDatasetDiscovery(client, { rows: [weakRow], createdBy: 'admin-1' })
+  const before = client.tables.prospect_candidates[0]
+  assert.equal(before.status, 'manual_review')
+  // Re-discovering the SAME source item with strong evidence this time hits
+  // the re-discovery "rescue" branch of processCandidate(), not the main
+  // (new-candidate) branch - this is what regression-tests THAT branch's own
+  // copy of the same fix.
+  const strongRow = manufacturerRow({ source_external_id: 'rescue-ext-1' })
+  const run2 = await runUploadedDatasetDiscovery(client, { rows: [strongRow], createdBy: 'admin-1' })
+  assert.equal(run2.candidates_promoted, 1)
+  assert.equal(run2.summary.statusCounts.promoted, 1)
+  assert.equal(run2.summary.statusCounts.qualified ?? 0, 0)
+})
+
+await check('Phase 24 fix: a dry-run "would-promote" candidate is still correctly counted under "qualified", never "promoted"', async () => {
+  const client = makeFakeClient()
+  const run = await runDiscovery(client, {
+    sourceId: (await client.from('prospect_sources').insert({ name: 'منبع dry-run آزمایشی', source_type: 'uploaded_dataset', enabled: true }).select().single()).data.id,
+    runType: 'manual',
+    uploadedRows: [manufacturerRow()],
+    dryRun: true,
+  })
+  assert.equal(run.candidates_promoted, 0, 'dry-run must never flip a candidate to promoted')
+  assert.equal(run.summary.statusCounts.qualified, 1, 'a would-promote candidate stays counted as qualified in dry-run')
+  assert.equal(run.summary.statusCounts.promoted ?? 0, 0)
+})
+
 console.log(`\n${passed} check(s) passed.`)
