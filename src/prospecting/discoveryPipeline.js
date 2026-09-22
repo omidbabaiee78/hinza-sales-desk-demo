@@ -38,6 +38,90 @@ import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES } from './sou
 // ---------------------------------------------------------------------------
 const MAX_IDENTITY_VERIFICATION_FETCHES_PER_RUN = 30
 
+// ---------------------------------------------------------------------------
+// Phase 24 - Autonomous Daily Prospecting Pipeline. runDiscovery() is the
+// SAME function the admin UI's manual buttons already call - Phase 24 does
+// not introduce a second orchestrator, it adds the safety limits/idempotency
+// a fully unattended (no browser, no admin session) daily run needs on top
+// of the existing one. Every default below is deliberately conservative -
+// see supabase/sql/phase24_autonomous_daily_pipeline.sql for the matching
+// prospect_settings columns and their PRODUCTION defaults (which stay
+// conservative even where the in-repo constant below is looser, since a
+// persisted prospect_settings row always wins once it exists).
+// ---------------------------------------------------------------------------
+const DEFAULT_MAX_EXTERNAL_REQUESTS_PER_RUN = 20
+const DEFAULT_RUN_TIMEOUT_MS = 4 * 60 * 1000 // 4 minutes - safely under a Supabase Edge Function's own execution ceiling
+// A 'scheduled' run row stuck in status='running' for longer than this is
+// treated as abandoned (crashed process, killed Edge Function, etc.) and
+// reclaimed rather than permanently blocking every future daily run.
+const STALE_SCHEDULED_RUN_THRESHOLD_MS = 30 * 60 * 1000
+
+// A rough, conservative per-source request-cost ESTIMATE used only to decide
+// whether a source fits inside the run-wide external-request budget BEFORE
+// calling adapter.discover() - never an exact count of what the adapter ends
+// up doing internally (that stays entirely the adapter's own concern, see
+// e.g. serperSearch.js/osmOverpass.js's own sequential-request-per-template
+// and retry/failover regression tests, which this never touches or
+// duplicates). uploaded_dataset/company_website/existing_database sources
+// have no live network cost from the orchestrator's point of view.
+function estimateSourceRequestCost(source) {
+  if (source.source_type === 'search_result') {
+    const templates = Array.isArray(source.config?.queryTemplates) ? source.config.queryTemplates.length : DEFAULT_SERPER_QUERY_TEMPLATES.length
+    return Math.max(1, templates)
+  }
+  if (
+    source.source_type === 'public_directory' ||
+    source.source_type === 'industrial_directory' ||
+    source.source_type === 'trade_show_directory' ||
+    source.source_type === 'association_directory' ||
+    source.source_type === 'government_registry' ||
+    source.source_type === 'custom_api'
+  ) {
+    return 1
+  }
+  return 0
+}
+
+// Real Postgres/PostgREST unique-violation shape (SQLSTATE 23505) - the
+// backstop for the true-simultaneous-race case guardConcurrentScheduledRun()
+// below cannot fully close on its own (two invocations both passing the
+// SELECT check in the same instant). Never exercised by the in-memory fake
+// client the regression suite uses (it has no constraint concept at all,
+// same as every other real DB constraint in this codebase) - the SELECT-based
+// guard is what the regression suite actually verifies.
+function isUniqueViolationError(err) {
+  return err?.code === '23505' || /duplicate key value/i.test(err?.message || '')
+}
+
+// Phase 24, STEP 4 - the primary, TESTED concurrency guard against the same
+// scheduled invocation firing twice (an accidental double cron trigger, a
+// pg_net retry that actually succeeded the first time, etc.): at most one
+// 'scheduled' run may be status='running' at once. A run stuck running past
+// STALE_SCHEDULED_RUN_THRESHOLD_MS is reclaimed (marked failed) rather than
+// blocking the daily pipeline forever.
+async function guardConcurrentScheduledRun(client) {
+  const { data: runningRows, error } = await client
+    .from('prospect_discovery_runs')
+    .select('id, started_at')
+    .eq('run_type', 'scheduled')
+    .eq('status', 'running')
+  if (error) throw error
+
+  const now = Date.now()
+  for (const row of runningRows || []) {
+    const age = now - new Date(row.started_at).getTime()
+    if (age > STALE_SCHEDULED_RUN_THRESHOLD_MS) {
+      await client
+        .from('prospect_discovery_runs')
+        .update({ status: 'failed', finished_at: new Date().toISOString(), summary: { abandoned: true, reason: 'stale_running_row_reclaimed' } })
+        .eq('id', row.id)
+    } else {
+      return { skipped: true, reason: 'اجرای زمان‌بندی‌شده دیگری هم‌اکنون در حال اجراست.' }
+    }
+  }
+  return { skipped: false }
+}
+
 function shouldVerifyIdentity({ candidate, entityType, buyerFit, identity, qualification }) {
   if (isNonCompanyEntityType(entityType)) return false
   if (buyerFit !== 'high') return false
@@ -263,7 +347,7 @@ async function promoteCandidateRow(client, candidateRow, evidence, { createdBy, 
   return lead.id
 }
 
-async function processCandidate(client, { rawItem, source, adapter, run, settings, dedupRecords, createdBy, remainingPromotions, identityBudget }) {
+async function processCandidate(client, { rawItem, source, adapter, run, settings, dedupRecords, createdBy, remainingPromotions, identityBudget, dryRun = false }) {
   const normalized = adapter.normalize(rawItem, source)
   if (!normalized.canonical_name) {
     throw new Error('candidate is missing a usable company name')
@@ -308,7 +392,7 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
           .select('*')
           .single()
         if (error) throw error
-        return { created: false, duplicate: updated.status === 'duplicate', promoted: false }
+        return { created: false, duplicate: updated.status === 'duplicate', promoted: false, status: updated.status }
       }
 
       const rescueBaseEvidence = extractEvidence(normalized)
@@ -343,12 +427,17 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
       await replaceEvidence(client, existingSelf.id, rescueEvidence)
 
       let rescuePromoted = false
+      let rescueWouldPromote = false
       if (rescueQualification.autoPromotable && rescueQualification.status === 'qualified' && remainingPromotions > 0) {
-        await promoteCandidateRow(client, updated, rescueEvidence, { createdBy, sourceName: source.name })
-        rescuePromoted = true
+        if (dryRun) {
+          rescueWouldPromote = true
+        } else {
+          await promoteCandidateRow(client, updated, rescueEvidence, { createdBy, sourceName: source.name })
+          rescuePromoted = true
+        }
       }
 
-      return { created: false, duplicate: false, promoted: rescuePromoted }
+      return { created: false, duplicate: false, promoted: rescuePromoted, wouldPromote: rescueWouldPromote, status: rescueQualification.status }
     }
   }
 
@@ -376,7 +465,7 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
       match_explanation: match.explanation,
     }
     const saved = await upsertCandidate(client, payload, normalized.source_external_id, source.id)
-    return { created: saved.created, duplicate: true }
+    return { created: saved.created, duplicate: true, status: 'duplicate' }
   }
 
   const baseEvidence = extractEvidence(normalized)
@@ -412,15 +501,22 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
   await replaceEvidence(client, saved.row.id, evidence)
 
   let promoted = false
+  let wouldPromote = false
   if (qualification.autoPromotable && finalStatus === 'qualified' && remainingPromotions > 0) {
-    await promoteCandidateRow(client, saved.row, evidence, { createdBy, sourceName: source.name })
-    promoted = true
+    if (dryRun) {
+      wouldPromote = true
+    } else {
+      await promoteCandidateRow(client, saved.row, evidence, { createdBy, sourceName: source.name })
+      promoted = true
+    }
   }
 
   return {
     created: saved.created,
     duplicate: false,
     promoted,
+    wouldPromote,
+    status: finalStatus,
     newDedupRecord: { kind: 'candidate', id: saved.row.id, keys: candidateKeys },
   }
 }
@@ -432,95 +528,211 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
 // one malformed candidate/source failure never aborts the whole run.
 // ---------------------------------------------------------------------------
 
-export async function runDiscovery(client, { sourceId = null, runType = 'manual', uploadedRows = null, createdBy } = {}) {
-  const settings = await fetchProspectSettings(client)
+// Phase 24 additions (all optional, all backward compatible - a plain
+// runDiscovery(client, { sourceId, runType, uploadedRows, createdBy }) call,
+// exactly as the admin UI has always made it, behaves identically to before):
+//   dryRun - when true (or when the persisted settings.dry_run is true),
+//     runs the ENTIRE pipeline (discovery, dedupe, enrichment, qualification,
+//     candidate/evidence bookkeeping, run logging) exactly as normal, but
+//     never calls promoteCandidateRow() - zero rows are ever written to
+//     sales_leads. What a real run WOULD have promoted is still reported,
+//     under wouldPromoteCount, never conflated with the real promoted count.
+//   settingsOverride - a shallow, NEVER-PERSISTED override applied on top of
+//     the fetched prospect_settings for this one invocation only (see the
+//     manualTest path in supabase/functions/prospect-discovery/index.ts,
+//     STEP 8's "very small safe discovery budget" server test trigger).
+export async function runDiscovery(client, { sourceId = null, runType = 'manual', uploadedRows = null, createdBy, dryRun = false, settingsOverride = null } = {}) {
+  const fetchedSettings = await fetchProspectSettings(client)
+  const settings = settingsOverride ? { ...fetchedSettings, ...settingsOverride } : fetchedSettings
+  const effectiveDryRun = Boolean(dryRun || settings.dry_run)
+
   if (!settings.enabled) {
     return { skipped: true, reason: 'موتور کشف مشتری غیرفعال است.' }
+  }
+  // Phase 24, STEP 3 - a SEPARATE kill switch for just the unattended daily
+  // path, independent of `enabled` (which also gates every manual/admin run).
+  // An admin can keep manual "اجرای این منبع"/upload runs available while the
+  // daily schedule stays off, or vice versa.
+  if (runType === 'scheduled' && !settings.daily_run_enabled) {
+    return { skipped: true, reason: 'اجرای روزانه (زمان‌بندی‌شده) غیرفعال است.' }
+  }
+
+  // Phase 24, STEP 4 - concurrency guard: at most one scheduled run in
+  // status='running' at a time (see guardConcurrentScheduledRun()'s own
+  // header). Never applied to manual/admin runs - an admin deliberately
+  // clicking two different "اجرای این منبع" buttons is a different, much
+  // lower-risk situation than an unattended daily trigger firing twice.
+  if (runType === 'scheduled') {
+    const guard = await guardConcurrentScheduledRun(client)
+    if (guard.skipped) return guard
   }
 
   const sources = await fetchRunnableSources(client, sourceId)
 
-  const { data: runRow, error: runError } = await client
-    .from('prospect_discovery_runs')
-    .insert({ source_id: sourceId, run_type: runType, status: 'running' })
-    .select('*')
-    .single()
-  if (runError) throw runError
+  let runRow
+  try {
+    const { data, error } = await client
+      .from('prospect_discovery_runs')
+      .insert({ source_id: sourceId, run_type: runType, status: 'running' })
+      .select('*')
+      .single()
+    if (error) throw error
+    runRow = data
+  } catch (err) {
+    // Real-DB backstop for the true-simultaneous-race case (see
+    // isUniqueViolationError()'s header) - never hit by the in-memory fake
+    // client the regression suite uses, since it has no unique-constraint
+    // concept; the SELECT-based guard above is what that suite verifies.
+    if (runType === 'scheduled' && isUniqueViolationError(err)) {
+      return { skipped: true, reason: 'اجرای زمان‌بندی‌شده دیگری هم‌اکنون در حال اجراست.' }
+    }
+    throw err
+  }
 
   const totals = {
     candidatesFound: 0,
     candidatesCreated: 0,
     candidatesUpdated: 0,
     candidatesPromoted: 0,
+    // dry-run-only projection of what WOULD have been promoted - never added
+    // to candidatesPromoted, never written to candidates_promoted either;
+    // kept entirely separate so a dry run can never be mistaken for a real
+    // promotion count anywhere downstream.
+    wouldPromoteCount: 0,
     duplicatesDetected: 0,
     errorsCount: 0,
   }
+  const statusCounts = {}
   const sourceSummaries = []
   let dedupRecords = await fetchDedupRecords(client)
   const identityBudget = { remaining: MAX_IDENTITY_VERIFICATION_FETCHES_PER_RUN }
+  // Phase 24, STEP 3 - a single run-wide cap on external SEARCH/discovery
+  // requests (Serper/OSM-style sources), independent of the pre-existing
+  // identityBudget above (which only ever covers the separate, already
+  // tightly-capped live-website identity-verification fetch - see that
+  // constant's own header). A source whose estimated cost no longer fits is
+  // skipped BEFORE its adapter.discover() is ever called - the external
+  // request budget can never be exceeded, only under-used.
+  const externalRequestBudget = {
+    remaining: settings.max_external_requests_per_run ?? DEFAULT_MAX_EXTERNAL_REQUESTS_PER_RUN,
+    used: 0,
+  }
+  const runTimeoutMs = settings.run_timeout_ms ?? DEFAULT_RUN_TIMEOUT_MS
+  const runStartedAt = Date.now()
+  let timedOut = false
 
-  for (const source of sources) {
-    try {
-      const adapter = getSourceAdapter(source.source_type)
-      const rawItems = await adapter.discover(source, { rows: uploadedRows || [] })
-      const limit = source.config?.maxCandidatesPerRun ?? settings.max_candidates_per_source_per_run
-      const limitedItems = rawItems.slice(0, limit)
-      totals.candidatesFound += limitedItems.length
-
-      let sourceErrors = 0
-      // Section Q: keep a SHORT, safe diagnostic per failed item - stage +
-      // a short error class, never the candidate's own name/contact/PII,
-      // never a full stack dump. Capped so one badly-behaved source can't
-      // bloat the run summary; the counter (sourceErrors) still reflects
-      // the true total either way.
-      const errorSamples = []
-      for (const rawItem of limitedItems) {
-        try {
-          const remainingPromotions = settings.max_promotions_per_run - totals.candidatesPromoted
-          const result = await processCandidate(client, {
-            rawItem,
-            source,
-            adapter,
-            run: runRow,
-            settings,
-            dedupRecords,
-            createdBy,
-            remainingPromotions,
-            identityBudget,
-          })
-          if (result.duplicate) totals.duplicatesDetected += 1
-          else if (result.created) totals.candidatesCreated += 1
-          else totals.candidatesUpdated += 1
-          if (result.promoted) totals.candidatesPromoted += 1
-          if (result.newDedupRecord) dedupRecords = [...dedupRecords, result.newDedupRecord]
-        } catch (err) {
-          totals.errorsCount += 1
-          sourceErrors += 1
-          if (errorSamples.length < 5) {
-            errorSamples.push({
-              stage: 'process_candidate',
-              externalId: rawItem?.id ?? rawItem?.source_external_id ?? null,
-              error: err instanceof Error ? err.message : 'unknown_error',
-            })
-          }
-        }
+  try {
+    for (const source of sources) {
+      if (Date.now() - runStartedAt > runTimeoutMs) {
+        timedOut = true
+        sourceSummaries.push({ sourceId: source.id, name: source.name, skipped: true, reason: 'run_timeout_exceeded' })
+        continue
       }
 
-      await client
-        .from('prospect_sources')
-        .update({ last_run_at: new Date().toISOString(), last_success_at: new Date().toISOString(), last_error: sourceErrors > 0 ? `${sourceErrors} مورد با خطا مواجه شد.` : null })
-        .eq('id', source.id)
-      sourceSummaries.push({ sourceId: source.id, name: source.name, found: limitedItems.length, errors: sourceErrors, errorSamples })
-    } catch (sourceError) {
-      // One source failing (e.g. an unconfigured/unreachable adapter) never
-      // aborts the whole run - the other sources still get a chance.
-      totals.errorsCount += 1
-      await client.from('prospect_sources').update({ last_run_at: new Date().toISOString(), last_error: sourceError.message }).eq('id', source.id)
-      sourceSummaries.push({ sourceId: source.id, name: source.name, error: sourceError.message, stage: 'source_discover' })
+      const requestCost = estimateSourceRequestCost(source)
+      if (requestCost > externalRequestBudget.remaining) {
+        sourceSummaries.push({ sourceId: source.id, name: source.name, skipped: true, reason: 'external_request_budget_exhausted' })
+        continue
+      }
+      externalRequestBudget.remaining -= requestCost
+      externalRequestBudget.used += requestCost
+
+      try {
+        const adapter = getSourceAdapter(source.source_type)
+        const rawItems = await adapter.discover(source, { rows: uploadedRows || [] })
+        const limit = source.config?.maxCandidatesPerRun ?? settings.max_candidates_per_source_per_run
+        const limitedItems = rawItems.slice(0, limit)
+        totals.candidatesFound += limitedItems.length
+
+        let sourceErrors = 0
+        // Section Q: keep a SHORT, safe diagnostic per failed item - stage +
+        // a short error class, never the candidate's own name/contact/PII,
+        // never a full stack dump. Capped so one badly-behaved source can't
+        // bloat the run summary; the counter (sourceErrors) still reflects
+        // the true total either way.
+        const errorSamples = []
+        for (const rawItem of limitedItems) {
+          try {
+            const promotedSoFar = effectiveDryRun ? totals.wouldPromoteCount : totals.candidatesPromoted
+            const remainingPromotions = settings.max_promotions_per_run - promotedSoFar
+            const result = await processCandidate(client, {
+              rawItem,
+              source,
+              adapter,
+              run: runRow,
+              settings,
+              dedupRecords,
+              createdBy,
+              remainingPromotions,
+              identityBudget,
+              dryRun: effectiveDryRun,
+            })
+            if (result.duplicate) totals.duplicatesDetected += 1
+            else if (result.created) totals.candidatesCreated += 1
+            else totals.candidatesUpdated += 1
+            if (result.promoted) totals.candidatesPromoted += 1
+            if (result.wouldPromote) totals.wouldPromoteCount += 1
+            if (result.status) statusCounts[result.status] = (statusCounts[result.status] || 0) + 1
+            if (result.newDedupRecord) dedupRecords = [...dedupRecords, result.newDedupRecord]
+          } catch (err) {
+            totals.errorsCount += 1
+            sourceErrors += 1
+            if (errorSamples.length < 5) {
+              errorSamples.push({
+                stage: 'process_candidate',
+                externalId: rawItem?.id ?? rawItem?.source_external_id ?? null,
+                error: err instanceof Error ? err.message : 'unknown_error',
+              })
+            }
+          }
+        }
+
+        await client
+          .from('prospect_sources')
+          .update({ last_run_at: new Date().toISOString(), last_success_at: new Date().toISOString(), last_error: sourceErrors > 0 ? `${sourceErrors} مورد با خطا مواجه شد.` : null })
+          .eq('id', source.id)
+        sourceSummaries.push({ sourceId: source.id, name: source.name, found: limitedItems.length, errors: sourceErrors, errorSamples })
+      } catch (sourceError) {
+        // One source failing (e.g. an unconfigured/unreachable adapter) never
+        // aborts the whole run - the other sources still get a chance.
+        totals.errorsCount += 1
+        await client.from('prospect_sources').update({ last_run_at: new Date().toISOString(), last_error: sourceError.message }).eq('id', source.id)
+        sourceSummaries.push({ sourceId: source.id, name: source.name, error: sourceError.message, stage: 'source_discover' })
+      }
     }
+  } catch (fatalError) {
+    // Phase 24, STEP 6 - a genuinely unexpected, unhandled failure (anything
+    // NOT already isolated by the per-source/per-candidate try/catch above)
+    // still stops safely: the run row is marked 'failed' with a short error
+    // summary rather than left stuck at status='running' forever (which
+    // guardConcurrentScheduledRun() would otherwise only reclaim after
+    // STALE_SCHEDULED_RUN_THRESHOLD_MS). Every promotion already made before
+    // the failure stays exactly as-is (promoteCandidateRow() marks each
+    // candidate 'promoted' immediately, one at a time) - a subsequent retry
+    // never repeats them, the same idempotency the rest of this file relies
+    // on throughout.
+    await client
+      .from('prospect_discovery_runs')
+      .update({
+        status: 'failed',
+        finished_at: new Date().toISOString(),
+        candidates_found: totals.candidatesFound,
+        candidates_created: totals.candidatesCreated,
+        candidates_updated: totals.candidatesUpdated,
+        candidates_promoted: totals.candidatesPromoted,
+        duplicates_detected: totals.duplicatesDetected,
+        errors_count: totals.errorsCount + 1,
+        summary: {
+          sources: sourceSummaries,
+          fatalError: fatalError instanceof Error ? fatalError.message : 'unknown_error',
+          dryRun: effectiveDryRun,
+        },
+      })
+      .eq('id', runRow.id)
+    throw fatalError
   }
 
-  const status = totals.errorsCount === 0 ? 'completed' : totals.candidatesFound > 0 ? 'partial' : 'failed'
+  const status = timedOut ? 'partial' : totals.errorsCount === 0 ? 'completed' : totals.candidatesFound > 0 ? 'partial' : 'failed'
   const { data: finishedRun, error: finishError } = await client
     .from('prospect_discovery_runs')
     .update({
@@ -529,10 +741,24 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
       candidates_found: totals.candidatesFound,
       candidates_created: totals.candidatesCreated,
       candidates_updated: totals.candidatesUpdated,
+      // A dry run's own candidate/evidence bookkeeping still happens for
+      // audit purposes (see this function's own header), but its promoted
+      // COUNT must stay a true, honest zero here - wouldPromoteCount below
+      // is the ONLY place the projection is reported.
       candidates_promoted: totals.candidatesPromoted,
       duplicates_detected: totals.duplicatesDetected,
       errors_count: totals.errorsCount,
-      summary: { sources: sourceSummaries },
+      summary: {
+        sources: sourceSummaries,
+        dryRun: effectiveDryRun,
+        timedOut,
+        runTimeoutMs,
+        statusCounts,
+        wouldPromoteCount: totals.wouldPromoteCount,
+        externalRequestsUsed: externalRequestBudget.used,
+        externalRequestBudget: settings.max_external_requests_per_run ?? DEFAULT_MAX_EXTERNAL_REQUESTS_PER_RUN,
+        identityVerificationFetchesUsed: MAX_IDENTITY_VERIFICATION_FETCHES_PER_RUN - identityBudget.remaining,
+      },
     })
     .eq('id', runRow.id)
     .select('*')

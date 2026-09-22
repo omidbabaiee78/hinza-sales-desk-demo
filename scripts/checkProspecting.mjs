@@ -36,6 +36,14 @@ async function check(name, fn) {
   console.log(`ok - ${name}`)
 }
 
+// Phase 24 fields (daily_run_enabled/max_external_requests_per_run/
+// run_timeout_ms/dry_run) default here to "fully turned on for testing" -
+// this mirrors how `enabled: true` already does NOT reflect production's
+// conservative default, it reflects "an admin has already configured and
+// enabled this system", which is what most of this suite needs to actually
+// exercise the pipeline. Production's real defaults (daily_run_enabled and
+// dry_run OFF) live only in supabase/sql/phase24_autonomous_daily_pipeline.sql
+// and are asserted independently by the Phase 24 tests below.
 const DEFAULT_SETTINGS = {
   id: 1,
   enabled: true,
@@ -44,6 +52,10 @@ const DEFAULT_SETTINGS = {
   min_score_auto_promote: 80,
   min_confidence_auto_promote: 'high',
   min_score_manual_review: 50,
+  daily_run_enabled: true,
+  max_external_requests_per_run: 20,
+  run_timeout_ms: 240000,
+  dry_run: false,
 }
 
 // ---------------------------------------------------------------------------
@@ -2817,6 +2829,280 @@ await check('a disabled prospecting engine skips the run entirely', async () => 
   client.tables.prospect_settings[0].enabled = false
   const result = await runDiscovery(client, { runType: 'manual' })
   assert.equal(result.skipped, true)
+})
+
+// ---------------------------------------------------------------------------
+// Phase 24 - Autonomous Daily Prospecting Pipeline. runDiscovery() is the
+// SAME function every test above already exercises - these checks cover
+// only the NEW safety/idempotency behavior Phase 24 adds on top of it
+// (concurrency guard, daily-only kill switch, external-request budget, run
+// timeout, dry-run). See discoveryPipeline.js's own Phase 24 header comment.
+// ---------------------------------------------------------------------------
+
+await check('Phase 24: a second scheduled run is skipped while one is already "running" (duplicate cron invocation)', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_discovery_runs').insert({ source_id: null, run_type: 'scheduled', status: 'running' })
+  const result = await runDiscovery(client, { runType: 'scheduled' })
+  assert.equal(result.skipped, true)
+  assert.equal(client.tables.prospect_discovery_runs.length, 1, 'no second run row was created while one was already running')
+})
+
+await check('Phase 24: a scheduled run stuck "running" past the stale threshold is reclaimed, not treated as still active', async () => {
+  const client = makeFakeClient()
+  const staleStartedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1 hour ago
+  await client.from('prospect_discovery_runs').insert({ source_id: null, run_type: 'scheduled', status: 'running', started_at: staleStartedAt })
+  const result = await runDiscovery(client, { runType: 'scheduled' })
+  assert.notEqual(result.skipped, true, 'a stale running row must not block a new scheduled run')
+  const stale = client.tables.prospect_discovery_runs.find((r) => r.started_at === staleStartedAt)
+  assert.equal(stale.status, 'failed', 'the abandoned row is reclaimed as failed rather than left running forever')
+})
+
+await check('Phase 24: two full scheduled discovery runs back to back never create a duplicate lead for the same rediscovered company', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع آزمایشی روزانه', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()] })
+  await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()] })
+  assert.equal(client.tables.prospect_candidates.length, 1, 'no duplicate candidate row across two scheduled runs')
+  assert.equal(client.tables.sales_leads.length, 1, 'no duplicate lead across two scheduled runs')
+})
+
+await check('Phase 24: an existing lead match still blocks promotion on the scheduled (daily) path, not just manual', async () => {
+  const client = makeFakeClient()
+  client.tables.sales_leads.push({ id: 'lead-existing', company_name: 'شرکت قبلی', mobile: '09123456789', phone: null, email: null, city: null })
+  await client.from('prospect_sources').insert({ name: 'منبع روزانه', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow({ source_external_id: null })] })
+  assert.equal(run.duplicates_detected, 1)
+  assert.equal(client.tables.sales_leads.length, 1, 'no new lead created for a duplicate on the scheduled path')
+})
+
+await check('Phase 24: zero eligible candidates completes cleanly with promoted=0 and no errors', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع خالی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [] })
+  assert.equal(run.status, 'completed')
+  assert.equal(run.candidates_found, 0)
+  assert.equal(run.candidates_promoted, 0)
+  assert.equal(run.errors_count, 0)
+})
+
+await check('Phase 24: a source whose estimated request cost exceeds the remaining external-request budget is skipped BEFORE any network call', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].max_external_requests_per_run = 2
+  await client
+    .from('prospect_sources')
+    .insert({
+      name: 'جستجوی وب آزمایشی',
+      source_type: 'search_result',
+      enabled: true,
+      config: { queryTemplates: ['q1', 'q2', 'q3', 'q4'] }, // estimated cost 4, budget is 2
+    })
+    .select()
+    .single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled' })
+  assert.equal(run.summary.sources.length, 1)
+  assert.equal(run.summary.sources[0].skipped, true)
+  assert.equal(run.summary.sources[0].reason, 'external_request_budget_exhausted')
+  assert.equal(run.candidates_found, 0, 'the source was never actually queried - no fetch/Deno mock was needed for this test')
+})
+
+await check('Phase 24: exceeding run_timeout_ms stops processing further sources and marks the run "partial", never silently hanging', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].run_timeout_ms = -1 // already "expired" the instant the run starts
+  await client.from('prospect_sources').insert({ name: 'منبع کند', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()] })
+  assert.equal(run.status, 'partial')
+  assert.equal(run.summary.timedOut, true)
+  assert.equal(run.candidates_found, 0, 'the source was skipped once the timeout budget was already spent')
+})
+
+await check('Phase 24: one malformed candidate does not stop the rest of the batch from being processed', async () => {
+  const client = makeFakeClient()
+  const badRow = manufacturerRow({ company_name: '', source_external_id: 'bad-1' })
+  const goodRow = manufacturerRow({ source_external_id: 'good-1' })
+  const run = await runUploadedDatasetDiscovery(client, { rows: [badRow, goodRow], createdBy: 'admin-1' })
+  assert.ok(run.errors_count >= 1, 'the malformed row is counted as an error, not silently dropped')
+  assert.equal(client.tables.prospect_candidates.length, 1, 'the good row still gets processed and created')
+  assert.equal(client.tables.sales_leads.length, 1, 'the good row still gets promoted despite the other row failing')
+})
+
+await check('Phase 24: a full scheduled run never touches any outreach/messaging table', async () => {
+  // The fake client (makeFakeClient()) intentionally defines ONLY the
+  // prospecting + sales_leads/companies tables - if the pipeline ever tried
+  // to read/write an outreach/messaging table (outreach_attempts,
+  // automation_tasks, inbound_replies, ...), `tables[table]` would be
+  // undefined and this would throw instead of completing - that absence of
+  // a throw IS the proof.
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع بدون پیام‌رسانی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()] })
+  assert.equal(run.status, 'completed')
+})
+
+await check('Phase 24: daily_run_enabled=false blocks the scheduled path but NOT a manual run (a distinct kill switch from `enabled`)', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_run_enabled = false
+  const scheduledResult = await runDiscovery(client, { runType: 'scheduled' })
+  assert.equal(scheduledResult.skipped, true)
+
+  await client.from('prospect_sources').insert({ name: 'منبع دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const manualResult = await runDiscovery(client, { sourceId: null, runType: 'manual', uploadedRows: [manufacturerRow()] })
+  assert.equal(manualResult.skipped, undefined, 'a manual run must still work while only the daily schedule is disabled')
+  assert.equal(manualResult.status, 'completed')
+})
+
+await check('Phase 24: dry-run mode (persisted settings.dry_run) runs the full pipeline but creates zero sales_leads rows', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].dry_run = true
+  await client.from('prospect_sources').insert({ name: 'منبع آزمایشی dry-run', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()] })
+  assert.equal(client.tables.sales_leads.length, 0, 'dry-run must never write to sales_leads')
+  assert.equal(run.candidates_promoted, 0, 'the reported promoted count must stay a true zero in dry-run')
+  assert.equal(run.summary.wouldPromoteCount, 1, 'what WOULD have promoted is still reported, kept separate from the real count')
+  const candidate = client.tables.prospect_candidates[0]
+  assert.equal(candidate.status, 'qualified', 'the candidate is still scored/qualified for audit, just never flipped to promoted')
+})
+
+await check('Phase 24: an explicit dryRun:true argument forces dry-run even when settings.dry_run is false (the manual server-test path)', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی سرور', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: [manufacturerRow()], dryRun: true })
+  assert.equal(client.tables.sales_leads.length, 0)
+  assert.equal(run.summary.dryRun, true)
+})
+
+await check('Phase 24: settingsOverride applies only to the single invocation, never persists to prospect_settings', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع اورراید', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: [manufacturerRow()],
+    settingsOverride: { max_candidates_per_source_per_run: 1 },
+  })
+  assert.equal(client.tables.prospect_settings[0].max_candidates_per_source_per_run, 100, 'the persisted setting must be untouched by a one-off override')
+})
+
+// ---------------------------------------------------------------------------
+// Phase 24 acceptance-issue fix - the manual server-side test (STEP 8) must
+// be able to exercise the SAME runType:'scheduled' code path the real daily
+// cron will use WITHOUT requiring the persisted prospect_settings.
+// daily_run_enabled to be temporarily flipped on. The fix: the edge
+// function's manualTest path now passes settingsOverride:{
+// daily_run_enabled: true, ... } into runDiscovery() - an in-memory
+// override for that one call only, never written to the database. These
+// tests exercise that EXACT override shape directly against runDiscovery(),
+// the same mechanism supabase/functions/prospect-discovery/index.ts's
+// manualTest branch now uses.
+// ---------------------------------------------------------------------------
+
+function manualTestSettingsOverride() {
+  return { daily_run_enabled: true, max_candidates_per_source_per_run: 3, max_external_requests_per_run: 2 }
+}
+
+await check('Phase 24 fix (1): a normal scheduled run (no manualTest override) still respects daily_run_enabled=false and is skipped', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_run_enabled = false
+  const result = await runDiscovery(client, { runType: 'scheduled' })
+  assert.equal(result.skipped, true)
+})
+
+await check('Phase 24 fix (2): the manualTest settingsOverride lets the scheduled path proceed even while daily_run_enabled=false is persisted', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_run_enabled = false
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: [manufacturerRow()],
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.notEqual(run.skipped, true, 'manualTest must not be blocked by the persisted daily_run_enabled=false')
+  assert.equal(run.status, 'completed')
+})
+
+await check('Phase 24 fix (3): manualTest forces dry-run - zero sales_leads even on the scheduled path with an otherwise auto-promotable candidate', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_run_enabled = false
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: [manufacturerRow()],
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.equal(client.tables.sales_leads.length, 0, 'manualTest must never create a real lead')
+  assert.equal(run.candidates_promoted, 0)
+  assert.equal(run.summary.wouldPromoteCount, 1, 'what WOULD have promoted is still reported')
+})
+
+await check('Phase 24 fix (4): manualTest respects its own tiny 3-candidate budget even when more rows are available', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const rows = [1, 2, 3, 4, 5].map((n) => manufacturerRow({ source_external_id: `ext-${n}`, mobile: `0912345670${n}` }))
+  const run = await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: rows,
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.equal(run.candidates_found, 3, 'only 3 of the 5 available rows are evaluated, per the manualTest budget')
+})
+
+await check('Phase 24 fix (5): manualTest respects its own tiny 2-external-request budget - a costlier search source is skipped before any network call', async () => {
+  const client = makeFakeClient()
+  await client
+    .from('prospect_sources')
+    .insert({ name: 'جستجوی وب تست دستی', source_type: 'search_result', enabled: true, config: { queryTemplates: ['q1', 'q2', 'q3'] } })
+    .select()
+    .single()
+  const run = await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.equal(run.summary.sources[0].skipped, true)
+  assert.equal(run.summary.sources[0].reason, 'external_request_budget_exhausted')
+})
+
+await check('Phase 24 fix (6): manualTest never persists daily_run_enabled=true - the column stays false after the call', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_run_enabled = false
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: [manufacturerRow()],
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.equal(client.tables.prospect_settings[0].daily_run_enabled, false, 'the persisted column must be untouched by the manualTest override')
+})
+
+await check('Phase 24 fix (7): two manualTest-shaped invocations for the same source item stay idempotent - no duplicate candidate, no duplicate lead', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const rows = [manufacturerRow()] // stable source_external_id: 'ext-1'
+  await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: rows, dryRun: true, settingsOverride: manualTestSettingsOverride() })
+  await runDiscovery(client, { sourceId: null, runType: 'scheduled', uploadedRows: rows, dryRun: true, settingsOverride: manualTestSettingsOverride() })
+  assert.equal(client.tables.prospect_candidates.length, 1, 'no duplicate candidate identity across two manualTest runs of the same item')
+  assert.equal(client.tables.sales_leads.length, 0, 'still zero leads - both runs stayed dry-run')
+})
+
+await check('Phase 24 fix (8): a manualTest-shaped run never touches any outreach/messaging table (same proof-by-not-throwing as the general dry-run/scheduled tests)', async () => {
+  const client = makeFakeClient()
+  await client.from('prospect_sources').insert({ name: 'منبع تست دستی', source_type: 'uploaded_dataset', enabled: true }).select().single()
+  const run = await runDiscovery(client, {
+    sourceId: null,
+    runType: 'scheduled',
+    uploadedRows: [manufacturerRow()],
+    dryRun: true,
+    settingsOverride: manualTestSettingsOverride(),
+  })
+  assert.equal(run.status, 'completed')
 })
 
 console.log(`\n${passed} check(s) passed.`)

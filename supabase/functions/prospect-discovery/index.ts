@@ -159,11 +159,36 @@ Deno.serve(async (req) => {
   //
   // Anything else (including the cron path, which never sends `mode`) does
   // a full discovery run.
+  // Phase 24, STEP 8 - a secure way to trigger ONE complete server-side
+  // pipeline run manually, exercising the EXACT SAME code path the future
+  // cron will use, without any browser/admin session: curl this function
+  // with the x-prospecting-secret header (the same secret pg_net will send)
+  // and { "mode": "run", "manualTest": true } - actorType becomes 'cron' the
+  // same way a real scheduled trigger's request would, so runType below
+  // becomes 'scheduled' automatically. manualTest forces dryRun=true AND a
+  // small, safe, NEVER-PERSISTED settings override (see runDiscovery()'s own
+  // settingsOverride parameter) - daily_run_enabled:true (so the test can
+  // exercise the scheduled path even while the PERSISTED
+  // prospect_settings.daily_run_enabled stays false) plus a tiny 3-candidate/
+  // 2-external-request budget - so a manual test can never do a full-cost
+  // run, never write a real lead, and never itself turns the real daily
+  // schedule on. dryRun can also be requested on its own (without
+  // manualTest's smaller budget/override) for a full-budget dry run against
+  // whatever daily_run_enabled is CURRENTLY persisted as. Neither field is
+  // ever sent by the real pg_cron trigger (supabase/sql/
+  // phase23_prospecting_cron.sql always POSTs an empty body), so this has
+  // zero effect on the actual daily schedule once activated - a genuine
+  // scheduled trigger still respects the persisted daily_run_enabled exactly
+  // as before.
   let sourceId: string | null = null
   let mode: string = 'run'
+  let manualTest = false
+  let dryRun = false
   try {
     const body = await req.json().catch(() => ({}))
     sourceId = body?.sourceId || null
+    manualTest = body?.manualTest === true
+    dryRun = body?.dryRun === true
     mode =
       body?.mode === 'health'
         ? 'health'
@@ -186,7 +211,14 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: 'unauthorized' }, 401)
   }
 
-  console.log('prospect-discovery: start', `actor=${auth.actorType}`, `mode=${mode}`, sourceId ? `source=${sourceId}` : 'all sources')
+  console.log(
+    'prospect-discovery: start',
+    `actor=${auth.actorType}`,
+    `mode=${mode}`,
+    sourceId ? `source=${sourceId}` : 'all sources',
+    manualTest ? 'manualTest=true' : '',
+    dryRun ? 'dryRun=true' : '',
+  )
 
   try {
     if (mode === 'health') {
@@ -237,7 +269,30 @@ Deno.serve(async (req) => {
     }
 
     const runType = auth.actorType === 'cron' ? 'scheduled' : 'manual'
-    const run = await runDiscovery(client, { sourceId, runType, createdBy: auth.userId })
+    const run = await runDiscovery(client, {
+      sourceId,
+      runType,
+      createdBy: auth.userId,
+      dryRun: dryRun || manualTest,
+      // manualTest must be able to exercise the SAME runType:'scheduled' path
+      // the real daily cron will use, WITHOUT requiring the persisted
+      // prospect_settings.daily_run_enabled to be temporarily flipped on -
+      // daily_run_enabled:true here is a one-off override inside
+      // runDiscovery()'s in-memory settings object for THIS call only (see
+      // settingsOverride's own header in discoveryPipeline.js), never
+      // written to the database. A real scheduled cron trigger never sends
+      // manualTest (phase23_prospecting_cron.sql always POSTs an empty
+      // body), so this has zero effect on whether the real daily schedule
+      // is gated - that gate is still the persisted column, checked exactly
+      // as before for every non-manualTest scheduled invocation. Combined
+      // with dryRun above and the tiny budget below, a manualTest run can
+      // exercise the scheduled path but can never write a real lead, never
+      // exceed 3 candidates/2 external requests, and never itself enables
+      // anything persisted.
+      settingsOverride: manualTest
+        ? { daily_run_enabled: true, max_candidates_per_source_per_run: 3, max_external_requests_per_run: 2 }
+        : null,
+    })
     const durationMs = Date.now() - startedAt
 
     if (run.skipped) {
@@ -250,7 +305,13 @@ Deno.serve(async (req) => {
     const response = {
       ok: true,
       run_id: run.id,
+      run_type: run.run_type,
       status: run.status,
+      dry_run: run.summary?.dryRun ?? false,
+      would_promote_count: run.summary?.wouldPromoteCount ?? 0,
+      external_requests_used: run.summary?.externalRequestsUsed ?? 0,
+      external_request_budget: run.summary?.externalRequestBudget ?? null,
+      timed_out: run.summary?.timedOut ?? false,
       candidates_found: run.candidates_found,
       candidates_created: run.candidates_created,
       candidates_updated: run.candidates_updated,

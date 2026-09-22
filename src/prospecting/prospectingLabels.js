@@ -68,3 +68,11 @@ export const RUN_STATUS_LABELS = {
 export function runStatusLabel(status) {
   return RUN_STATUS_LABELS[status] || status
 }
+
+export const RUN_TYPE_LABELS = {
+  manual: 'دستی',
+  scheduled: 'زمان‌بندی‌شده (روزانه)',
+}
+export function runTypeLabel(type) {
+  return RUN_TYPE_LABELS[type] || type
+}

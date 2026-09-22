@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useProspecting } from '../../../hooks/useProspecting'
 import { formatJalaliDateTime } from '../../../utils/formatters'
-import { runStatusLabel } from '../../../prospecting/prospectingLabels'
+import { runStatusLabel, runTypeLabel } from '../../../prospecting/prospectingLabels'
 import ErrorBanner from '../../common/ErrorBanner'
 import ProspectCandidateCard from './ProspectCandidateCard'
 import UploadCandidatesModal from './UploadCandidatesModal'
@@ -25,6 +25,20 @@ const TABS = [
 ]
 
 const SECONDARY_TABS = TABS.filter((tab) => tab.key !== PRIMARY_TAB_KEY)
+
+// Phase 24, STEP 5 - a run's duration/trigger type/dry-run+budget usage are
+// all already recorded (prospect_discovery_runs.run_type/started_at/
+// finished_at/summary), just not previously surfaced in this table.
+function formatRunDuration(run) {
+  if (!run.started_at || !run.finished_at) return '—'
+  const ms = new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return '<۱ ثانیه'
+  const totalSeconds = Math.round(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes} دقیقه ${seconds} ثانیه` : `${seconds} ثانیه`
+}
 
 function isToday(iso) {
   if (!iso) return false
@@ -409,19 +423,22 @@ export default function AdminProspectingPage() {
           <thead>
             <tr>
               <th>منبع</th>
+              <th>نوع اجرا</th>
               <th>وضعیت</th>
               <th>یافت‌شده</th>
               <th>جدید</th>
               <th>واردشده به لیدها</th>
               <th>Duplicate</th>
               <th>خطا</th>
+              <th>درخواست خارجی</th>
+              <th>مدت</th>
               <th>زمان شروع</th>
             </tr>
           </thead>
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={8} className="profile-empty">
+                <td colSpan={11} className="profile-empty">
                   اجرایی ثبت نشده است.
                 </td>
               </tr>
@@ -429,12 +446,20 @@ export default function AdminProspectingPage() {
             {runs.map((run) => (
               <tr key={run.id}>
                 <td>{run.prospect_sources?.name || 'همه منابع'}</td>
+                <td>
+                  {runTypeLabel(run.run_type)}
+                  {run.summary?.dryRun && <span className="today-priority-dot tone-contacted" style={{ marginInlineStart: 6 }}>Dry-run</span>}
+                </td>
                 <td>{runStatusLabel(run.status)}</td>
                 <td>{run.candidates_found}</td>
                 <td>{run.candidates_created}</td>
-                <td>{run.candidates_promoted}</td>
+                <td>{run.summary?.dryRun ? `۰ (پیش‌بینی: ${run.summary?.wouldPromoteCount ?? 0})` : run.candidates_promoted}</td>
                 <td>{run.duplicates_detected}</td>
                 <td>{run.errors_count}</td>
+                <td>
+                  {run.summary?.externalRequestsUsed ?? 0}/{run.summary?.externalRequestBudget ?? '—'}
+                </td>
+                <td>{formatRunDuration(run)}</td>
                 <td>{formatJalaliDateTime(run.started_at)}</td>
               </tr>
             ))}
