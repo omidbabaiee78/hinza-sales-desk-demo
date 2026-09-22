@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useOutreachHub } from '../../../hooks/useOutreachHub'
+import { useOutreachShadow } from '../../../hooks/useOutreachShadow'
 import { formatJalaliDateTime } from '../../../utils/formatters'
 import { attemptStatusLabel, outreachChannelLabel } from '../../../outreach/outreachLabels'
 import { taskTypeLabel } from '../../../automation/taskLabels'
 import ErrorBanner from '../../common/ErrorBanner'
 import OutreachCard from './OutreachCard'
+import ShadowSuggestionCard from './ShadowSuggestionCard'
 import '../../common/DataTable.css'
 import '../today/Today.css'
 import '../automation/Automation.css'
@@ -15,6 +17,7 @@ const TABS = [
   { key: 'approval', label: 'نیازمند تأیید' },
   { key: 'outside_window', label: 'خارج از زمان تماس' },
   { key: 'blocked', label: 'مسدود' },
+  { key: 'shadow', label: 'SHADOW MODE (پیشنهادهای خودکار)' },
   { key: 'history', label: 'تاریخچه' },
 ]
 
@@ -35,10 +38,24 @@ export default function AdminOutreachPage({ onOpenLead }) {
     markDoNotContact,
   } = useOutreachHub()
 
+  const {
+    rows: shadowSuggestions,
+    loading: shadowLoading,
+    running: shadowRunning,
+    actionError: shadowActionError,
+    lastRun: shadowLastRun,
+    runShadowNow,
+    approve: shadowApprove,
+    edit: shadowEdit,
+    dismiss: shadowDismiss,
+    snooze: shadowSnooze,
+  } = useOutreachShadow()
+
   const [activeTab, setActiveTab] = useState('ready')
   const [overdueOnly, setOverdueOnly] = useState(false)
 
   const handlers = { approve, snooze, dismiss, recordAttempt, recordCompletedAttempt, markDoNotContact, refresh }
+  const shadowHandlers = { approve: shadowApprove, edit: shadowEdit, dismiss: shadowDismiss, snooze: shadowSnooze }
 
   const buckets = useMemo(() => {
     const ready = []
@@ -140,19 +157,53 @@ export default function AdminOutreachPage({ onOpenLead }) {
         </div>
       </div>
 
-      {loading && <p className="profile-empty">در حال بارگذاری...</p>}
+      {loading && activeTab !== 'shadow' && <p className="profile-empty">در حال بارگذاری...</p>}
 
-      {!loading && activeTab !== 'history' && listByTab[activeTab].length === 0 && (
+      {!loading && activeTab !== 'history' && activeTab !== 'shadow' && listByTab[activeTab].length === 0 && (
         <div className="today-empty-state">
           <p className="today-empty-title">موردی در این بخش وجود ندارد.</p>
         </div>
       )}
 
-      {!loading && activeTab !== 'history' && listByTab[activeTab].length > 0 && (
+      {!loading && activeTab !== 'history' && activeTab !== 'shadow' && listByTab[activeTab].length > 0 && (
         <div className="today-item-list">
           {listByTab[activeTab].map((opportunity) => (
             <OutreachCard key={opportunity.taskId} opportunity={opportunity} onOpenLead={onOpenLead} handlers={handlers} />
           ))}
+        </div>
+      )}
+
+      {activeTab === 'shadow' && (
+        <div className="outreach-shadow-panel">
+          <div className="outreach-shadow-banner">
+            SHADOW MODE — هیچ پیامی به‌صورت واقعی ارسال نمی‌شود. این بخش فقط پیشنهادهای خودکار برای سرنخ‌های حاصل از کشف مشتری خودکار را نشان می‌دهد؛ «تأیید» فقط پیام را برای ارسال دستیِ آینده آماده می‌کند.
+          </div>
+          <div className="page-toolbar" style={{ marginBottom: 8 }}>
+            <button type="button" className="btn-secondary" disabled={shadowRunning} onClick={runShadowNow}>
+              {shadowRunning ? 'در حال اجرای ارزیابی...' : 'اجرای ارزیابی حالت سایه'}
+            </button>
+            {shadowLastRun && !shadowLastRun.skipped && (
+              <p className="lead-form-hint">
+                آخرین اجرا — بررسی‌شده: {shadowLastRun.leads_scanned} | آماده: {shadowLastRun.eligible_count} | در انتظار: {shadowLastRun.waiting_count} | مسدود:{' '}
+                {shadowLastRun.blocked_count} | نیازمند بررسی: {shadowLastRun.manual_review_count} | پیشنهاد جدید: {shadowLastRun.suggestions_created} | تکراری رد‌شده:{' '}
+                {shadowLastRun.duplicates_skipped}
+              </p>
+            )}
+          </div>
+          {shadowActionError && <ErrorBanner message={shadowActionError} />}
+          {shadowLoading && <p className="profile-empty">در حال بارگذاری...</p>}
+          {!shadowLoading && shadowSuggestions.length === 0 && (
+            <div className="today-empty-state">
+              <p className="today-empty-title">هنوز پیشنهادی ثبت نشده است.</p>
+            </div>
+          )}
+          {!shadowLoading && shadowSuggestions.length > 0 && (
+            <div className="today-item-list">
+              {shadowSuggestions.map((suggestion) => (
+                <ShadowSuggestionCard key={suggestion.id} suggestion={suggestion} onOpenLead={onOpenLead} handlers={shadowHandlers} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

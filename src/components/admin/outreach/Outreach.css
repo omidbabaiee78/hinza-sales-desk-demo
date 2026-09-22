@@ -64,3 +64,16 @@
     align-items: stretch;
   }
 }
+
+/* ---------- Phase 25 SHADOW MODE ---------- */
+
+.outreach-shadow-banner {
+  background: var(--status-offer-bg, #fef3c7);
+  color: var(--status-offer-text, #b45309);
+  border: 1px solid var(--status-offer-text, #b45309);
+  border-radius: var(--radius-card, 10px);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
