@@ -1,0 +1,11 @@
+/* Phase 26 prep - hub sub-navigation strip shown at the top of each grouped
+   admin section (فروش/مشتریان/سیستم) below the shared AppShell header. Reuses
+   the existing .today-chip pill styling for visual consistency with the
+   rest of the admin panel - no new visual language introduced. */
+
+.admin-hub-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
