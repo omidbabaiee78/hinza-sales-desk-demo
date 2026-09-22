@@ -41,3 +41,81 @@
     align-items: stretch;
   }
 }
+
+/* ---------- primary workflow actions ---------- */
+
+.prospecting-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.prospecting-promote-btn {
+  color: var(--status-lost-text, #b91c1c);
+  border-color: var(--status-lost-text, #b91c1c);
+}
+
+.prospecting-primary-result {
+  margin-bottom: 16px;
+}
+
+/* ---------- secondary "more actions" panel ---------- */
+
+.prospecting-more-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card, 10px);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
+.prospecting-more-panel > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  list-style: revert;
+}
+
+.prospecting-more-panel[open] > summary {
+  margin-bottom: 10px;
+}
+
+.prospecting-more-section {
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.prospecting-more-section:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.prospecting-more-section + .prospecting-more-section {
+  margin-top: 10px;
+}
+
+.prospecting-more-section-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.prospecting-current-view-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Nested raw-JSON disclosure inside a diagnostic result box - the copy
+   button + count summary above stay visible; only the large JSON dump
+   itself hides behind this, per-result. */
+.prospecting-json-details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  list-style: revert;
+}

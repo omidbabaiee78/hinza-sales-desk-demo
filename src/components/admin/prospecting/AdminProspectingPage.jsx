@@ -12,15 +12,19 @@ import '../automation/Automation.css'
 import '../outreach/Outreach.css'
 import './Prospecting.css'
 
+const PRIMARY_TAB_KEY = 'manual_review'
+
 const TABS = [
   { key: 'top', label: 'پیشنهادهای برتر' },
-  { key: 'manual_review', label: 'نیازمند بررسی' },
+  { key: PRIMARY_TAB_KEY, label: 'نیازمند بررسی' },
   { key: 'rejected', label: 'رد شده' },
   { key: 'duplicate', label: 'Duplicate' },
   { key: 'promoted', label: 'واردشده به لیدها' },
   { key: 'runs', label: 'اجراها' },
   { key: 'sources', label: 'منابع' },
 ]
+
+const SECONDARY_TABS = TABS.filter((tab) => tab.key !== PRIMARY_TAB_KEY)
 
 function isToday(iso) {
   if (!iso) return false
@@ -62,7 +66,7 @@ export default function AdminProspectingPage() {
     runPromoteEligibleCandidates,
   } = useProspecting()
 
-  const [activeTab, setActiveTab] = useState('top')
+  const [activeTab, setActiveTab] = useState(PRIMARY_TAB_KEY)
   const [uploading, setUploading] = useState(false)
   const [copyNotice, setCopyNotice] = useState('')
   const [verifyCopyNotice, setVerifyCopyNotice] = useState('')
@@ -147,6 +151,7 @@ export default function AdminProspectingPage() {
   }
 
   const visibleCandidates = activeTab === 'runs' || activeTab === 'sources' ? [] : buckets[activeTab] || []
+  const activeTabLabel = TABS.find((tab) => tab.key === activeTab)?.label || ''
 
   return (
     <div className="prospecting-page">
@@ -191,167 +196,197 @@ export default function AdminProspectingPage() {
         </div>
       </div>
 
-      <div className="today-filters">
-        <div className="today-filter-group">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`today-chip${activeTab === tab.key ? ' active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {!loading && activeTab === 'manual_review' && (
-        <div className="page-toolbar" style={{ marginBottom: 8 }}>
-          {/* Phase 23D, item 10: rescore all EXISTING manual_review
-              candidates under Smart Qualification 2.0 - safe/idempotent,
-              never promotes or deletes anything, see
-              reEvaluateManualReviewCandidates() in discoveryPipeline.js. */}
-          <button type="button" className="btn-link" disabled={reEvaluatingAll} onClick={reEvaluateAllManualReview}>
-            {reEvaluatingAll ? 'در حال ارزیابی مجدد...' : 'ارزیابی مجدد همه موارد نیازمند بررسی (Smart Qualification 2.0)'}
+      {/* Primary workflow actions - always visible, not gated behind a tab.
+          These are the 3 actions an admin actually needs day-to-day; every
+          other diagnostic/secondary tool moved into the collapsible panel
+          below (see "prospecting-more-panel"). */}
+      {!loading && (
+        <div className="prospecting-primary-actions">
+          <button type="button" className="btn-secondary" disabled={reEvaluatingAll} onClick={reEvaluateAllManualReview}>
+            {reEvaluatingAll ? 'در حال ارزیابی مجدد...' : 'ارزیابی مجدد همه موارد نیازمند بررسی'}
           </button>
-          {/* Dry run: calculates what Smart Qualification 2.0 WOULD do to
-              every current manual_review candidate WITHOUT writing
-              anything to the database (dryRunQualification() in
-              discoveryPipeline.js / mode:'dry_run_qualification' in the
-              Edge Function). Purely for review - copy the JSON output and
-              share it, nothing here changes any candidate's status. */}
           <button
             type="button"
-            className="btn-link"
-            disabled={dryRunLoading}
-            onClick={() => {
-              setCopyNotice('')
-              runDryRunQualification()
-            }}
-          >
-            {dryRunLoading ? 'در حال محاسبه پیش‌نمایش...' : 'پیش‌نمایش Smart Qualification 2.0 (بدون تغییر در دیتابیس)'}
-          </button>
-          {/* Phase 23D-FINAL.1: the ONE comprehensive, read-only audit -
-              ALWAYS covers manual_review + rejected + qualified
-              server-side (never just manual_review), and always reports
-              the full real database status distribution too
-              (databaseStatusCounts, auditedCount, excludedCount) so its
-              scope is self-evident from the result itself, not from which
-              button was clicked (runComprehensiveAudit() /
-              mode:'comprehensive_audit'). Safe to run before or after the
-              re-evaluate button above - never writes anything itself. */}
-          <button
-            type="button"
-            className="btn-link"
-            disabled={verifyLoading}
-            onClick={() => {
-              setVerifyCopyNotice('')
-              runVerifyQualificationState()
-            }}
-          >
-            {verifyLoading ? 'در حال اجرای بازبینی جامع...' : 'بازبینی جامع (manual_review + رد شده + واجد شرایط) — بدون نوشتن در دیتابیس'}
-          </button>
-          {/* "Controlled Promotion Acceptance" round - the ONE real-write
-              bulk action on this page: promotes every candidate the
-              comprehensive audit currently reports as auto-promotable into
-              a real sales_leads row (mode:'promote_eligible_candidates').
-              Idempotent (see promoteEligibleCandidates() in
-              discoveryPipeline.js) but NOT read-only - guarded by its own
-              confirm() dialog, styled distinctly, and deliberately never
-              auto-triggered. */}
-          <button
-            type="button"
-            className="btn-link-danger"
+            className="btn-secondary prospecting-promote-btn"
             disabled={promoteEligibleLoading}
             onClick={handlePromoteEligibleClick}
           >
-            {promoteEligibleLoading
-              ? 'در حال تبدیل نامزدهای واجد شرایط به سرنخ...'
-              : 'تبدیل گروهی نامزدهای واجد شرایط به سرنخ (نوشتار واقعی در دیتابیس)'}
+            {promoteEligibleLoading ? 'در حال تبدیل نامزدهای واجد شرایط به سرنخ...' : 'تبدیل گروهی نامزدهای واجد شرایط به سرنخ'}
           </button>
         </div>
       )}
 
-      {!loading && activeTab === 'manual_review' && dryRunResult && (
-        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
-          <p className="lead-form-hint">
-            پیش‌نمایش (dry run) - هیچ تغییری در دیتابیس اعمال نشد. مجموع: {dryRunResult.total} | واجد شرایط:{' '}
-            {dryRunResult.counts?.qualified ?? 0} | نیازمند بررسی: {dryRunResult.counts?.manual_review ?? 0} | رد شده:{' '}
-            {dryRunResult.counts?.rejected ?? 0} | قابل تبدیل خودکار: {dryRunResult.autoPromotableCount ?? 0}
-            {dryRunResult.errors ? ` | خطا: ${dryRunResult.errors}` : ''}
-          </p>
-          {dryRunResult.buyerFitCounts && (
-            <p className="lead-form-hint">
-              Buyer Fit — بالا: {dryRunResult.buyerFitCounts.high ?? 0} | متوسط: {dryRunResult.buyerFitCounts.medium ?? 0} | کم:{' '}
-              {dryRunResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {dryRunResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
-              {dryRunResult.buyerFitCounts.unknown ?? 0}
-            </p>
-          )}
-          <button type="button" className="btn-link" onClick={handleCopyDryRun}>
-            کپی کردن نتیجه کامل (JSON)
-          </button>
-          {copyNotice && <span style={{ marginInlineStart: 8 }}>{copyNotice}</span>}
-          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
-            {JSON.stringify(dryRunResult, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {!loading && activeTab === 'manual_review' && verifyResult && (
-        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
-          <p className="lead-form-hint">
-            بازبینی جامع - هیچ تغییری در دیتابیس اعمال نشد. وضعیت واقعی دیتابیس (databaseStatusCounts): واجد شرایط{' '}
-            {verifyResult.databaseStatusCounts?.qualified ?? 0} | رد شده {verifyResult.databaseStatusCounts?.rejected ?? 0} | نیازمند بررسی{' '}
-            {verifyResult.databaseStatusCounts?.manual_review ?? 0} | تکراری {verifyResult.databaseStatusCounts?.duplicate ?? 0} | تبدیل‌شده{' '}
-            {verifyResult.databaseStatusCounts?.promoted ?? 0}
-          </p>
-          <p className="lead-form-hint">
-            بررسی‌شده (auditedCount): {verifyResult.auditedCount ?? 0} = manual_review+رد شده+واجد شرایط | مستثنی‌شده (excludedCount):{' '}
-            {verifyResult.excludedCount ?? 0} (تکراری+تبدیل‌شده) | قابل تبدیل خودکار: {verifyResult.autoPromotableCount ?? 0} | تعارض منطقی
-            (logicalConflictCount): {verifyResult.logicalConflictCount ?? 0}
-            {verifyResult.errors ? ` | خطا: ${verifyResult.errors}` : ''}
-          </p>
-          <p className="lead-form-hint">
-            هویت تایید‌شده (verified): {verifyResult.identityVerifiedCount ?? 0} | هویت محتمل (probable): {verifyResult.identityProbableCount ?? 0} |
-            هویت نامشخص (unresolved): {verifyResult.identityUnresolvedCount ?? 0} | تلاش برای بررسی وب‌سایت:{' '}
-            {verifyResult.identityVerificationAttempted ?? 0} | نیازمند غنی‌سازی: {verifyResult.enrichmentNeededCount ?? 0} | نجات‌یافته از رد:{' '}
-            {verifyResult.rescuedFalseNegatives ?? 0} | تنزل‌یافته از واجد شرایط: {verifyResult.downgradedFalsePositives ?? 0}
-          </p>
-          {verifyResult.buyerFitCounts && (
-            <p className="lead-form-hint">
-              Buyer Fit — بالا: {verifyResult.buyerFitCounts.high ?? 0} | متوسط: {verifyResult.buyerFitCounts.medium ?? 0} | کم:{' '}
-              {verifyResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {verifyResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
-              {verifyResult.buyerFitCounts.unknown ?? 0}
-            </p>
-          )}
-          <button type="button" className="btn-link" onClick={handleCopyVerify}>
-            کپی کردن نتیجه کامل (JSON)
-          </button>
-          {verifyCopyNotice && <span style={{ marginInlineStart: 8 }}>{verifyCopyNotice}</span>}
-          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
-            {JSON.stringify(verifyResult, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {!loading && activeTab === 'manual_review' && promoteEligibleResult && (
-        <div className="prospect-evidence-box" style={{ marginBottom: 12 }}>
+      {!loading && promoteEligibleResult && (
+        <div className="prospect-evidence-box prospecting-primary-result">
           <p className="lead-form-hint">
             تبدیل گروهی — این یک نوشتار واقعی بود. واجد شرایط قبل از اجرا: {promoteEligibleResult.eligibleBefore ?? 0} | تبدیل‌شده به لید:{' '}
             {promoteEligibleResult.promoted ?? 0} | از قبل تبدیل‌شده: {promoteEligibleResult.alreadyPromoted ?? 0} | رد‌شده به‌دلیل تطابق قبلی:{' '}
             {promoteEligibleResult.skippedExistingMatch ?? 0} | دیگر واجد شرایط نبود: {promoteEligibleResult.noLongerEligible ?? 0} | خطا:{' '}
             {promoteEligibleResult.failed ?? 0}
           </p>
-          <button type="button" className="btn-link" onClick={handleCopyPromoteEligible}>
-            کپی کردن نتیجه کامل (JSON)
-          </button>
-          {promoteEligibleCopyNotice && <span style={{ marginInlineStart: 8 }}>{promoteEligibleCopyNotice}</span>}
-          <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
-            {JSON.stringify(promoteEligibleResult, null, 2)}
-          </pre>
+          <details className="prospecting-json-details">
+            <summary>نمایش نتیجه کامل (JSON)</summary>
+            <button type="button" className="btn-link" onClick={handleCopyPromoteEligible}>
+              کپی کردن نتیجه کامل (JSON)
+            </button>
+            {promoteEligibleCopyNotice && <span style={{ marginInlineStart: 8 }}>{promoteEligibleCopyNotice}</span>}
+            <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+              {JSON.stringify(promoteEligibleResult, null, 2)}
+            </pre>
+          </details>
         </div>
       )}
+
+      {/* Secondary / diagnostic tools + the less-used queue views - tucked
+          away behind one collapsible panel so they don't compete for
+          attention with the primary workflow above. */}
+      <details className="prospecting-more-panel">
+        <summary>ابزارها و نماهای بیشتر</summary>
+
+        <div className="prospecting-more-section">
+          <p className="prospecting-more-section-title">نماهای دیگر</p>
+          <div className="today-filter-group">
+            {SECONDARY_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={`today-chip${activeTab === tab.key ? ' active' : ''}`}
+                onClick={() => setActiveTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="prospecting-more-section">
+          <p className="prospecting-more-section-title">ابزارهای Smart Qualification 2.0</p>
+          <div className="today-filter-group">
+            {/* Dry run: calculates what Smart Qualification 2.0 WOULD do to
+                every current manual_review candidate WITHOUT writing
+                anything to the database (dryRunQualification() in
+                discoveryPipeline.js / mode:'dry_run_qualification' in the
+                Edge Function). Purely for review - copy the JSON output and
+                share it, nothing here changes any candidate's status. */}
+            <button
+              type="button"
+              className="btn-link"
+              disabled={dryRunLoading}
+              onClick={() => {
+                setCopyNotice('')
+                runDryRunQualification()
+              }}
+            >
+              {dryRunLoading ? 'در حال محاسبه پیش‌نمایش...' : 'پیش‌نمایش Smart Qualification 2.0 (بدون تغییر در دیتابیس)'}
+            </button>
+            {/* Phase 23D-FINAL.1: the ONE comprehensive, read-only audit -
+                ALWAYS covers manual_review + rejected + qualified
+                server-side (never just manual_review), and always reports
+                the full real database status distribution too
+                (databaseStatusCounts, auditedCount, excludedCount) so its
+                scope is self-evident from the result itself, not from which
+                button was clicked (runComprehensiveAudit() /
+                mode:'comprehensive_audit'). Safe to run before or after the
+                re-evaluate button above - never writes anything itself. */}
+            <button
+              type="button"
+              className="btn-link"
+              disabled={verifyLoading}
+              onClick={() => {
+                setVerifyCopyNotice('')
+                runVerifyQualificationState()
+              }}
+            >
+              {verifyLoading ? 'در حال اجرای بازبینی جامع...' : 'بازبینی جامع (manual_review + رد شده + واجد شرایط) — بدون نوشتن در دیتابیس'}
+            </button>
+          </div>
+
+          {dryRunResult && (
+            <div className="prospect-evidence-box" style={{ marginTop: 8 }}>
+              <p className="lead-form-hint">
+                پیش‌نمایش (dry run) - هیچ تغییری در دیتابیس اعمال نشد. مجموع: {dryRunResult.total} | واجد شرایط:{' '}
+                {dryRunResult.counts?.qualified ?? 0} | نیازمند بررسی: {dryRunResult.counts?.manual_review ?? 0} | رد شده:{' '}
+                {dryRunResult.counts?.rejected ?? 0} | قابل تبدیل خودکار: {dryRunResult.autoPromotableCount ?? 0}
+                {dryRunResult.errors ? ` | خطا: ${dryRunResult.errors}` : ''}
+              </p>
+              {dryRunResult.buyerFitCounts && (
+                <p className="lead-form-hint">
+                  Buyer Fit — بالا: {dryRunResult.buyerFitCounts.high ?? 0} | متوسط: {dryRunResult.buyerFitCounts.medium ?? 0} | کم:{' '}
+                  {dryRunResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {dryRunResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
+                  {dryRunResult.buyerFitCounts.unknown ?? 0}
+                </p>
+              )}
+              <details className="prospecting-json-details">
+                <summary>نمایش نتیجه کامل (JSON)</summary>
+                <button type="button" className="btn-link" onClick={handleCopyDryRun}>
+                  کپی کردن نتیجه کامل (JSON)
+                </button>
+                {copyNotice && <span style={{ marginInlineStart: 8 }}>{copyNotice}</span>}
+                <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+                  {JSON.stringify(dryRunResult, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+
+          {verifyResult && (
+            <div className="prospect-evidence-box" style={{ marginTop: 8 }}>
+              <p className="lead-form-hint">
+                بازبینی جامع - هیچ تغییری در دیتابیس اعمال نشد. وضعیت واقعی دیتابیس (databaseStatusCounts): واجد شرایط{' '}
+                {verifyResult.databaseStatusCounts?.qualified ?? 0} | رد شده {verifyResult.databaseStatusCounts?.rejected ?? 0} | نیازمند بررسی{' '}
+                {verifyResult.databaseStatusCounts?.manual_review ?? 0} | تکراری {verifyResult.databaseStatusCounts?.duplicate ?? 0} | تبدیل‌شده{' '}
+                {verifyResult.databaseStatusCounts?.promoted ?? 0}
+              </p>
+              <p className="lead-form-hint">
+                بررسی‌شده (auditedCount): {verifyResult.auditedCount ?? 0} = manual_review+رد شده+واجد شرایط | مستثنی‌شده (excludedCount):{' '}
+                {verifyResult.excludedCount ?? 0} (تکراری+تبدیل‌شده) | قابل تبدیل خودکار: {verifyResult.autoPromotableCount ?? 0} | تعارض منطقی
+                (logicalConflictCount): {verifyResult.logicalConflictCount ?? 0}
+                {verifyResult.errors ? ` | خطا: ${verifyResult.errors}` : ''}
+              </p>
+              <p className="lead-form-hint">
+                هویت تایید‌شده (verified): {verifyResult.identityVerifiedCount ?? 0} | هویت محتمل (probable): {verifyResult.identityProbableCount ?? 0} |
+                هویت نامشخص (unresolved): {verifyResult.identityUnresolvedCount ?? 0} | تلاش برای بررسی وب‌سایت:{' '}
+                {verifyResult.identityVerificationAttempted ?? 0} | نیازمند غنی‌سازی: {verifyResult.enrichmentNeededCount ?? 0} | نجات‌یافته از رد:{' '}
+                {verifyResult.rescuedFalseNegatives ?? 0} | تنزل‌یافته از واجد شرایط: {verifyResult.downgradedFalsePositives ?? 0}
+              </p>
+              {verifyResult.buyerFitCounts && (
+                <p className="lead-form-hint">
+                  Buyer Fit — بالا: {verifyResult.buyerFitCounts.high ?? 0} | متوسط: {verifyResult.buyerFitCounts.medium ?? 0} | کم:{' '}
+                  {verifyResult.buyerFitCounts.low ?? 0} | غیرمصرف‌کننده: {verifyResult.buyerFitCounts.not_buyer ?? 0} | نامشخص:{' '}
+                  {verifyResult.buyerFitCounts.unknown ?? 0}
+                </p>
+              )}
+              <details className="prospecting-json-details">
+                <summary>نمایش نتیجه کامل (JSON)</summary>
+                <button type="button" className="btn-link" onClick={handleCopyVerify}>
+                  کپی کردن نتیجه کامل (JSON)
+                </button>
+                {verifyCopyNotice && <span style={{ marginInlineStart: 8 }}>{verifyCopyNotice}</span>}
+                <pre style={{ maxHeight: 400, overflow: 'auto', fontSize: '0.8em', whiteSpace: 'pre-wrap', marginTop: 8 }}>
+                  {JSON.stringify(verifyResult, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </div>
+      </details>
+
+      <div className="today-filters">
+        <div className="today-filter-group">
+          <button
+            type="button"
+            className={`today-chip${activeTab === PRIMARY_TAB_KEY ? ' active' : ''}`}
+            onClick={() => setActiveTab(PRIMARY_TAB_KEY)}
+          >
+            {TABS.find((tab) => tab.key === PRIMARY_TAB_KEY)?.label}
+          </button>
+        </div>
+        {activeTab !== PRIMARY_TAB_KEY && (
+          <p className="prospecting-current-view-note">
+            نمای فعلی: {activeTabLabel}
+          </p>
+        )}
+      </div>
 
       {loading && <p className="profile-empty">در حال بارگذاری...</p>}
 
