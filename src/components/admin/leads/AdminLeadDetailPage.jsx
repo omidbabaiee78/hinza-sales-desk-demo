@@ -19,25 +19,26 @@ import LeadActivityFormModal from './LeadActivityFormModal'
 import LeadStatusChangeModal from './LeadStatusChangeModal'
 import LeadLostModal from './LeadLostModal'
 import LeadConvertModal from './LeadConvertModal'
+import LeadSamplesSection from './LeadSamplesSection'
 import '../../common/DataTable.css'
 import './Leads.css'
 
 const QUICK_ACTIVITY_BUTTONS = [
   { type: 'note', label: 'ثبت یادداشت' },
   { type: 'meeting', label: 'ثبت جلسه' },
-  { type: 'sample', label: 'ثبت نمونه' },
   { type: 'quote', label: 'ثبت قیمت' },
   { type: 'followup', label: 'ثبت پیگیری' },
 ]
 
 export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) {
-  const { lead, products, activities, loading, error, refresh } = useLeadDetail(leadId)
+  const { lead, products, activities, samples, loading, error, refresh } = useLeadDetail(leadId)
   const { leads } = useSalesLeads()
   const { companies } = useCompanyDirectory()
   const { admins } = useAdminProfiles()
 
   const [activeModal, setActiveModal] = useState(null) // 'edit' | 'status' | 'lost' | 'convert' | activityType
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [sampleNotice, setSampleNotice] = useState('')
 
   if (loading) return <LoadingScreen text="در حال بارگذاری سرنخ..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
@@ -48,6 +49,17 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
 
   function closeModal() {
     setActiveModal(null)
+  }
+
+  // The sample is already saved when timelineSaved is false - the notice
+  // explicitly says not to re-enter it, so no duplicate sample is created.
+  function handleSampleChanged(result) {
+    setSampleNotice(
+      result && result.timelineSaved === false
+        ? 'نمونه ذخیره شد، اما ورود آن در تاریخچه فعالیت ثبت نشد. لطفاً دوباره ثبت نکنید.'
+        : '',
+    )
+    refresh()
   }
 
   function handleSavedAndClose() {
@@ -232,6 +244,14 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             </div>
           )}
         </section>
+
+        <LeadSamplesSection
+          leadId={lead.id}
+          samples={samples}
+          canRecord={!isTerminal}
+          notice={sampleNotice}
+          onChanged={handleSampleChanged}
+        />
 
         {showAdvanced && <section className="lead-detail-card">
           <h3>اقدامات</h3>

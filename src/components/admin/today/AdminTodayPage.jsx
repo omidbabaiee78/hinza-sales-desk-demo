@@ -5,6 +5,7 @@ import ErrorBanner from '../../common/ErrorBanner'
 import LeadActivityFormModal from '../leads/LeadActivityFormModal'
 import TodayItemCard from './TodayItemCard'
 import TodayProspectingSummary from './TodayProspectingSummary'
+import TodaySampleFeedback from './TodaySampleFeedback'
 import './Today.css'
 
 const TEHRAN_TODAY_FORMATTER = new Intl.DateTimeFormat('fa-IR', {
@@ -52,6 +53,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [quickFollowUpLeadId, setQuickFollowUpLeadId] = useState(null)
+  const [sampleReloadToken, setSampleReloadToken] = useState(0)
 
   const flatItems = useMemo(() => queue.flatMap((entry) => (entry.kind === 'group' ? entry.items : [entry])), [queue])
 
@@ -104,7 +106,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
             کارهای مهم فروش و پیگیری در یک نگاه — {TEHRAN_TODAY_FORMATTER.format(new Date())}
           </p>
         </div>
-        <button type="button" className="btn-secondary" onClick={refresh}>
+        <button type="button" className="btn-secondary" onClick={() => { refresh(); setSampleReloadToken((token) => token + 1) }}>
           به‌روزرسانی
         </button>
         <button type="button" className="btn-secondary" aria-expanded={showAdvanced} onClick={() => { setShowAdvanced((value) => !value); setTypeFilter('all'); setPriorityFilter('all') }}>
@@ -187,6 +189,8 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
           </div>
         )}
       </section>
+
+      <TodaySampleFeedback reloadToken={sampleReloadToken} onOpenLead={onOpenLead} />
 
       {showAdvanced && showFirstContact && (
         <section className="today-section">
