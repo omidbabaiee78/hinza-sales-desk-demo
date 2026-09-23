@@ -1,10 +1,7 @@
 import { leadDisplayName } from '../../../utils/leadStatus'
 import LeadStatusBadge from './LeadStatusBadge'
 import LeadFollowUpBadge from './LeadFollowUpBadge'
-import LeadProductsCell from './LeadProductsCell'
 import LeadQuickContact from './LeadQuickContact'
-import LeadReadinessBadge from './LeadReadinessBadge'
-import LeadNextActionBadge from './LeadNextActionBadge'
 
 function LeadRowActions({ lead, onOpenLead, onQuickFollowUp }) {
   return (
@@ -15,7 +12,7 @@ function LeadRowActions({ lead, onOpenLead, onQuickFollowUp }) {
       <LeadQuickContact phone={lead.mobile || lead.phone} compact />
       {lead.status !== 'converted' && lead.status !== 'lost' && (
         <button type="button" className="btn-link" onClick={() => onQuickFollowUp(lead.id)}>
-          ثبت پیگیری
+          ثبت نتیجه تماس
         </button>
       )}
     </div>
@@ -33,7 +30,7 @@ export default function LeadsListView({
 }) {
   const selectable = Boolean(selectedIds && onToggleSelect)
   const allSelected = selectable && leads.length > 0 && leads.every((l) => selectedIds.has(l.id))
-  const colCount = selectable ? 11 : 10
+  const colCount = selectable ? 6 : 5
 
   return (
     <>
@@ -47,14 +44,8 @@ export default function LeadsListView({
                 </th>
               )}
               <th>شرکت</th>
-              <th>شخص تماس</th>
-              <th>شهر</th>
-              <th>صنعت</th>
-              <th>محصول / نیاز</th>
               <th>تماس</th>
               <th>وضعیت</th>
-              <th>آمادگی پیگیری</th>
-              <th>اقدام پیشنهادی</th>
               <th>پیگیری بعدی</th>
               <th>عملیات</th>
             </tr>
@@ -92,27 +83,11 @@ export default function LeadsListView({
                     </span>
                     {lead.do_not_contact && <span className="lead-status-badge tone-lost lead-dnc-tag">عدم تماس</span>}
                   </td>
-                  <td>
-                    <span className="lead-cell-clamp" title={lead.contact_name || ''}>
-                      {lead.contact_name || '—'}
-                    </span>
-                  </td>
-                  <td>{lead.city || '—'}</td>
-                  <td>{lead.industry || '—'}</td>
-                  <td>
-                    <LeadProductsCell products={lead.products} needNote={lead.need_note} />
-                  </td>
                   <td dir="ltr" style={{ textAlign: 'right' }}>
                     {lead.mobile || lead.phone || lead.email || '—'}
                   </td>
                   <td>
                     <LeadStatusBadge status={lead.status} />
-                  </td>
-                  <td>
-                    <LeadReadinessBadge lead={lead} />
-                  </td>
-                  <td>
-                    <LeadNextActionBadge lead={lead} />
                   </td>
                   <td>
                     <LeadFollowUpBadge nextFollowUpAt={lead.next_follow_up_at} />
@@ -148,18 +123,6 @@ export default function LeadsListView({
                   </div>
                 </div>
                 <LeadStatusBadge status={lead.status} />
-              </div>
-              <div className="lead-card-row">
-                <span className="lead-card-label">محصولات موردنیاز</span>
-                <LeadProductsCell products={lead.products} needNote={lead.need_note} />
-              </div>
-              <div className="lead-card-row">
-                <span className="lead-card-label">آمادگی پیگیری</span>
-                <LeadReadinessBadge lead={lead} />
-              </div>
-              <div className="lead-card-row">
-                <span className="lead-card-label">اقدام پیشنهادی</span>
-                <LeadNextActionBadge lead={lead} />
               </div>
               <div className="lead-card-row">
                 <span className="lead-card-label">پیگیری بعدی</span>

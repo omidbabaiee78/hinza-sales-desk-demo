@@ -51,9 +51,9 @@ const GROUPS = [
     defaultKey: 'leads',
     tabs: [
       { key: 'leads', label: 'سرنخ‌ها' },
-      { key: 'prospecting', label: 'کشف مشتری' },
-      { key: 'outreach', label: 'پیگیری فروش' },
-      { key: 'replies', label: 'پاسخ‌ها' },
+      { key: 'outreach', label: 'پیشنهاد پیام (آزمایشی)', advanced: true },
+      { key: 'prospecting', label: 'کشف مشتری', advanced: true },
+      { key: 'replies', label: 'پاسخ‌ها', advanced: true },
     ],
   },
   {
@@ -62,22 +62,21 @@ const GROUPS = [
     defaultKey: 'customers',
     tabs: [
       { key: 'customers', label: 'لیست مشتریان' },
-      { key: 'crm', label: 'CRM (نمای ۳۶۰)' },
-      { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
       { key: 'orders', label: 'سفارش‌ها' },
       { key: 'invoices', label: 'فاکتورها' },
-      { key: 'payments', label: 'پرداخت‌ها' },
-      { key: 'followUps', label: 'پیگیری‌های مالی' },
+      { key: 'crm', label: 'نمای کامل مشتری', advanced: true },
+      { key: 'registrationRequests', label: 'درخواست‌های عضویت', advanced: true },
+      { key: 'followUps', label: 'پیگیری‌های مالی', advanced: true },
     ],
   },
   { key: 'reports', label: 'گزارش‌ها' },
   {
     key: 'system',
     label: 'سیستم',
-    defaultKey: 'automation',
+    defaultKey: 'products',
     tabs: [
-      { key: 'automation', label: 'اتوماسیون' },
       { key: 'products', label: 'محصولات' },
+      { key: 'automation', label: 'اتوماسیون', advanced: true },
     ],
   },
 ]
@@ -215,18 +214,23 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
       onSignOut={onSignOut}
     >
       {activeGroup?.tabs && (
-        <div className="admin-hub-subnav">
-          {activeGroup.tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`today-chip${activeKey === tab.key ? ' active' : ''}`}
-              onClick={() => navigate(tab.key)}
-            >
+        <nav className="admin-hub-subnav" aria-label="بخش‌های پنل">
+          {activeGroup.tabs.filter((tab) => !tab.advanced).map((tab) => (
+            <button key={tab.key} type="button" className={`today-chip${activeKey === tab.key ? ' active' : ''}`} onClick={() => navigate(tab.key)}>
               {tab.label}
             </button>
           ))}
-        </div>
+          {activeGroup.tabs.some((tab) => tab.advanced) && (
+            <details className="admin-hub-more" key={activeGroup.key} open={activeGroup.tabs.some((tab) => tab.advanced && tab.key === activeKey) || undefined}>
+              <summary>بخش‌های دیگر</summary>
+              <div className="admin-hub-more-links">
+                {activeGroup.tabs.filter((tab) => tab.advanced).map((tab) => (
+                  <button key={tab.key} type="button" className={`today-chip${activeKey === tab.key ? ' active' : ''}`} onClick={() => navigate(tab.key)}>{tab.label}</button>
+                ))}
+              </div>
+            </details>
+          )}
+        </nav>
       )}
 
       {(activeKey === 'home' || activeKey === 'today') && (

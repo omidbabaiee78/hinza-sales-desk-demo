@@ -1,5 +1,28 @@
 /* ---------- status / follow-up badges ---------- */
 
+.lead-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.lead-primary-followup {
+  margin-bottom: 18px;
+  font-weight: 600;
+}
+
+.lead-form-more {
+  margin: 10px 0;
+}
+
+.lead-form-more summary {
+  cursor: pointer;
+  padding: 10px 0;
+  color: var(--text-muted);
+}
+
 .lead-status-badge {
   display: inline-block;
   padding: 3px 10px;

@@ -65,12 +65,13 @@ async function insertActivity(leadId, activityType, note, nextFollowUpAt) {
 // next_follow_up_at consistent with it, per the phase-15 spec: a real
 // contact (phone/whatsapp/meeting/sample/quote) stamps last_contact_at, and
 // a supplied next_follow_up_at always overwrites the lead's own field.
-export async function addLeadActivity(leadId, { activityType, note, nextFollowUpAt }) {
+export async function addLeadActivity(leadId, { activityType, note, nextFollowUpAt, clearFollowUp = false }) {
   await insertActivity(leadId, activityType, note, nextFollowUpAt)
 
   const updates = {}
   if (CONTACT_ACTIVITY_TYPES.has(activityType)) updates.last_contact_at = new Date().toISOString()
   if (nextFollowUpAt) updates.next_follow_up_at = nextFollowUpAt
+  else if (clearFollowUp) updates.next_follow_up_at = null
   if (Object.keys(updates).length > 0) {
     const { error } = await supabase.from('sales_leads').update(updates).eq('id', leadId)
     if (error) throw error

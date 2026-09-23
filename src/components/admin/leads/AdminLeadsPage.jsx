@@ -45,6 +45,7 @@ export default function AdminLeadsPage({ onOpenLead }) {
   const { admins } = useAdminProfiles()
 
   const [view, setView] = useState('list')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [cityFilter, setCityFilter] = useState('')
@@ -155,7 +156,7 @@ export default function AdminLeadsPage({ onOpenLead }) {
           <h2>سرنخ‌های فروش</h2>
           <p className="lead-page-subtitle">بانک مشتریان بالقوه Hinza Polymer</p>
         </div>
-        <div className="crm-view-tabs">
+        {showAdvanced && <div className="crm-view-tabs">
           <button type="button" className={`crm-view-tab${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')}>
             لیست
           </button>
@@ -166,15 +167,24 @@ export default function AdminLeadsPage({ onOpenLead }) {
           >
             قیف فروش
           </button>
-        </div>
+        </div>}
         <button type="button" className="btn-primary" onClick={() => setShowCreateModal(true)}>
           + افزودن سرنخ
         </button>
-        <button type="button" className="btn-primary" onClick={() => setShowImportModal(true)}>
-          افزودن گروهی از Excel
-        </button>
-        <button type="button" className="btn-secondary" onClick={refresh}>
-          به‌روزرسانی
+        <button type="button" className="btn-secondary" aria-expanded={showAdvanced} onClick={() => {
+          setShowAdvanced((value) => !value)
+          setView('list')
+          setStatusFilter('')
+          setCityFilter('')
+          setIndustryFilter('')
+          setSourceFilter('')
+          setPriorityFilter('')
+          setAssignedFilter('')
+          setSegmentFilter('')
+          setSortMode('smart')
+          clearSelection()
+        }}>
+          {showAdvanced ? 'بستن ابزارهای بیشتر' : 'ابزارهای بیشتر'}
         </button>
       </div>
 
@@ -193,19 +203,11 @@ export default function AdminLeadsPage({ onOpenLead }) {
           <span className="lead-chip-count">{loading ? '—' : summary.today}</span>
           <span className="lead-chip-label">پیگیری امروز</span>
         </div>
-        <div className="lead-chip">
-          <span className="lead-chip-count">{loading ? '—' : summary.negotiating}</span>
-          <span className="lead-chip-label">در مذاکره</span>
-        </div>
-        <div className="lead-chip">
-          <span className="lead-chip-count">{loading ? '—' : summary.convertedThisMonth}</span>
-          <span className="lead-chip-label">تبدیل‌شده این ماه</span>
-        </div>
       </div>
 
       {view === 'list' && (
         <>
-          <div className="lead-smart-segments">
+          {showAdvanced && <div className="lead-smart-segments">
             {LEAD_SMART_SEGMENTS.map((s) => (
               <button
                 key={s.key}
@@ -216,64 +218,62 @@ export default function AdminLeadsPage({ onOpenLead }) {
                 {s.label}
               </button>
             ))}
-          </div>
+          </div>}
 
           <div className="orders-filters">
             <input
               type="text"
               className="search-input"
-              placeholder="جستجو بر اساس شرکت، شخص تماس، موبایل، تلفن، ایمیل، وب‌سایت، شهر، صنعت، تگ یا محصول..."
+              placeholder="جستجوی نام شرکت یا شماره تماس"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select value={followUpFilter} onChange={(e) => setFollowUpFilter(e.target.value)}>
+              {FOLLOW_UP_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>پیگیری: {f.label}</option>
+              ))}
+            </select>
+            {showAdvanced && <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">همه وضعیت‌ها</option>
               {LEAD_STATUSES.map((s) => (
                 <option key={s} value={s}>
                   {leadStatusLabel(s)}
                 </option>
               ))}
-            </select>
-            <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}>
+            </select>}
+            {showAdvanced && <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}>
               <option value="">همه شهرها</option>
               {cities.map((city) => (
                 <option key={city} value={city}>
                   {city}
                 </option>
               ))}
-            </select>
-            <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
+            </select>}
+            {showAdvanced && <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
               <option value="">همه صنایع</option>
               {industries.map((industry) => (
                 <option key={industry} value={industry}>
                   {industry}
                 </option>
               ))}
-            </select>
-            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+            </select>}
+            {showAdvanced && <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
               <option value="">همه منابع</option>
               {LEAD_SOURCES.map((s) => (
                 <option key={s} value={s}>
                   {leadSourceLabel(s)}
                 </option>
               ))}
-            </select>
-            <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+            </select>}
+            {showAdvanced && <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
               <option value="">همه اولویت‌ها</option>
               {LEAD_PRIORITIES.map((p) => (
                 <option key={p} value={p}>
                   {leadPriorityLabel(p)}
                 </option>
               ))}
-            </select>
-            <select value={followUpFilter} onChange={(e) => setFollowUpFilter(e.target.value)}>
-              {FOLLOW_UP_FILTERS.map((f) => (
-                <option key={f.value} value={f.value}>
-                  پیگیری: {f.label}
-                </option>
-              ))}
-            </select>
-            {admins.length > 0 && (
+            </select>}
+            {showAdvanced && admins.length > 0 && (
               <select value={assignedFilter} onChange={(e) => setAssignedFilter(e.target.value)}>
                 <option value="">همه فروشنده‌ها</option>
                 {admins.map((a) => (
@@ -283,26 +283,29 @@ export default function AdminLeadsPage({ onOpenLead }) {
                 ))}
               </select>
             )}
-            <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
+            {showAdvanced && <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}>
               <option value="smart">مرتب‌سازی: هوشمند</option>
               <option value="default">مرتب‌سازی: جدیدترین</option>
-            </select>
+            </select>}
           </div>
 
-          <LeadBulkActionsBar
+          {showAdvanced && <><button type="button" className="btn-secondary" onClick={() => setShowImportModal(true)}>افزودن گروهی از Excel</button>{' '}
+          <button type="button" className="btn-secondary" onClick={refresh}>به‌روزرسانی</button></>}
+
+          {showAdvanced && <LeadBulkActionsBar
             selectedCount={selectedIds.size}
             onAction={setBulkAction}
             onClearSelection={clearSelection}
-          />
+          />}
 
           <LeadsListView
             leads={filteredLeads}
             loading={loading}
             onOpenLead={onOpenLead}
             onQuickFollowUp={setQuickFollowUpLeadId}
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
-            onToggleSelectAll={toggleSelectAll}
+            selectedIds={showAdvanced ? selectedIds : null}
+            onToggleSelect={showAdvanced ? toggleSelect : null}
+            onToggleSelectAll={showAdvanced ? toggleSelectAll : null}
           />
         </>
       )}
@@ -335,7 +338,7 @@ export default function AdminLeadsPage({ onOpenLead }) {
       {quickFollowUpLeadId && (
         <LeadActivityFormModal
           leadId={quickFollowUpLeadId}
-          activityType="followup"
+          activityType="phone"
           onSaved={() => {
             setQuickFollowUpLeadId(null)
             refresh()
