@@ -9,12 +9,22 @@ function isoDateNDaysFromNow(n) {
   return d.toISOString()
 }
 
-// SHADOW MODE card - deliberately has NO "open WhatsApp"/"call"/"send email"
-// action (unlike OutreachCard.jsx, which is for REAL manual outreach).
-// approve()/edit() only ever mark this row approved-for-future-send; they
-// never open a channel, never log an outreach_attempts row, and cannot send
-// anything (see src/outreach/channels/*.js's disabledExecute()).
-export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers }) {
+const SEND_STATUS_LABELS = {
+  not_sent: 'ارسال نشده',
+  ready_to_send: 'آماده ارسال',
+  sending: 'در حال ارسال...',
+  sent: 'ارسال‌شده',
+  failed: 'ارسال ناموفق',
+}
+
+// Phase 26 - approve()/edit() still only ever mark this row approved-for-
+// future-send (never sends anything by themselves). "ارسال آزمایشی" is the
+// ONE new action that can trigger a REAL provider call - but ALWAYS in test
+// mode (see services/outreachSend.js) - this UI never exposes a production
+// send button in this phase, matching the phase's explicit scope (STEP 5/
+// 15: manual approval required, real customer sends must stay impossible
+// until credentials + a later, separate go-live decision).
+export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers, sending, sendResult }) {
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -23,6 +33,7 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers 
   const isBlocked = suggestion.outreach_status === 'blocked'
   const isReview = suggestion.outreach_status === 'manual_review'
   const isDecided = ['approved', 'edited', 'dismissed'].includes(suggestion.status)
+  const canSendTest = ['approved', 'edited'].includes(suggestion.status) && suggestion.send_status !== 'sent'
   const messageText = suggestion.message_final || suggestion.message_draft
 
   async function run(fn, ...args) {
@@ -46,6 +57,9 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers 
           )}
           {suggestion.channel && <span className="outreach-channel-badge">{outreachChannelLabel(suggestion.channel)}</span>}
           <span className="outreach-channel-badge">{shadowSuggestionStatusLabel(suggestion.status)}</span>
+          {suggestion.send_status && suggestion.send_status !== 'not_sent' && (
+            <span className="outreach-channel-badge">{SEND_STATUS_LABELS[suggestion.send_status] || suggestion.send_status}</span>
+          )}
         </div>
         <div className="automation-card-who">{displayName}</div>
         {(lead?.city || lead?.industry) && <div className="today-item-context">{[lead?.city, lead?.industry].filter(Boolean).join(' — ')}</div>}
@@ -65,6 +79,25 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers 
           {suggestion.next_available_at && <span>زمان مجاز بعدی: {formatJalaliDateTime(suggestion.next_available_at)}</span>}
           <span>تولید شده: {formatJalaliDateTime(suggestion.generated_at)}</span>
         </div>
+
+        {sendResult && (
+          <div className="prospect-evidence-box">
+            {sendResult.ok ? (
+              <p className="lead-form-hint">
+                ارسال آزمایشی موفق بود — ارائه‌دهنده: {sendResult.provider || '—'} | شناسه پیام: {sendResult.providerMessageId || '—'}
+              </p>
+            ) : (
+              <>
+                <p className="lead-form-hint">ارسال آزمایشی انجام نشد:</p>
+                <ul className="outreach-reason-list">
+                  {(sendResult.reasons || [sendResult.errorMessage || 'خطای نامشخص']).map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="automation-card-actions" onClick={(e) => e.stopPropagation()}>
@@ -98,7 +131,15 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers 
             </button>
           </>
         )}
+
+        {canSendTest && (
+          <button type="button" className="btn-link" disabled={sending} onClick={() => handlers.sendTest(suggestion.id)}>
+            {sending ? 'در حال ارسال آزمایشی...' : 'ارسال آزمایشی (Send Test)'}
+          </button>
+        )}
       </div>
+
+      {canSendTest && <p className="outreach-test-mode-banner">حالت آزمایشی — ارسال واقعی به مشتریان غیرفعال است</p>}
 
       {editing && (
         <MessagePreviewModal

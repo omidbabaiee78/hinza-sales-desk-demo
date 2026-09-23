@@ -8,6 +8,7 @@ import {
   dismissSuggestion,
   snoozeSuggestion,
 } from '../services/outreachSuggestions'
+import { sendTestMessage } from '../services/outreachSend'
 
 function translateDbError(message) {
   if (!message) return 'خطایی رخ داد. لطفاً دوباره تلاش کنید.'
@@ -27,6 +28,8 @@ export function useOutreachShadow() {
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
   const [lastRun, setLastRun] = useState(null)
+  const [sendResults, setSendResults] = useState({})
+  const [sendingId, setSendingId] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +72,27 @@ export function useOutreachShadow() {
     }
   }
 
+  // Phase 26 - ALWAYS testMode:true (see services/outreachSend.js's own
+  // header) - this UI has no path to a production send in this phase.
+  // Surfaces the gate's own reasons (e.g. "credentials not configured")
+  // directly, rather than a generic error, since a blocked test send is an
+  // expected, informative outcome here, not a failure of the app itself.
+  async function sendTest(suggestionId) {
+    setSendingId(suggestionId)
+    setActionError('')
+    try {
+      const result = await sendTestMessage(suggestionId)
+      setSendResults((prev) => ({ ...prev, [suggestionId]: result }))
+      await load()
+      return result
+    } catch (err) {
+      setActionError(translateDbError(err.message))
+      return null
+    } finally {
+      setSendingId(null)
+    }
+  }
+
   return {
     rows,
     loading,
@@ -76,11 +100,14 @@ export function useOutreachShadow() {
     error,
     actionError,
     lastRun,
+    sendResults,
+    sendingId,
     refresh: load,
     runShadowNow,
     approve: (id) => runAction(approveSuggestion, id),
     edit: (id, finalText) => runAction(editSuggestion, id, finalText),
     dismiss: (id, feedback) => runAction(dismissSuggestion, id, feedback),
     snooze: (id, untilIso) => runAction(snoozeSuggestion, id, untilIso),
+    sendTest,
   }
 }

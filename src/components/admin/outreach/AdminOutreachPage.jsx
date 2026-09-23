@@ -44,18 +44,21 @@ export default function AdminOutreachPage({ onOpenLead }) {
     running: shadowRunning,
     actionError: shadowActionError,
     lastRun: shadowLastRun,
+    sendResults,
+    sendingId,
     runShadowNow,
     approve: shadowApprove,
     edit: shadowEdit,
     dismiss: shadowDismiss,
     snooze: shadowSnooze,
+    sendTest,
   } = useOutreachShadow()
 
   const [activeTab, setActiveTab] = useState('ready')
   const [overdueOnly, setOverdueOnly] = useState(false)
 
   const handlers = { approve, snooze, dismiss, recordAttempt, recordCompletedAttempt, markDoNotContact, refresh }
-  const shadowHandlers = { approve: shadowApprove, edit: shadowEdit, dismiss: shadowDismiss, snooze: shadowSnooze }
+  const shadowHandlers = { approve: shadowApprove, edit: shadowEdit, dismiss: shadowDismiss, snooze: shadowSnooze, sendTest }
 
   const buckets = useMemo(() => {
     const ready = []
@@ -200,7 +203,14 @@ export default function AdminOutreachPage({ onOpenLead }) {
           {!shadowLoading && shadowSuggestions.length > 0 && (
             <div className="today-item-list">
               {shadowSuggestions.map((suggestion) => (
-                <ShadowSuggestionCard key={suggestion.id} suggestion={suggestion} onOpenLead={onOpenLead} handlers={shadowHandlers} />
+                <ShadowSuggestionCard
+                  key={suggestion.id}
+                  suggestion={suggestion}
+                  onOpenLead={onOpenLead}
+                  handlers={shadowHandlers}
+                  sending={sendingId === suggestion.id}
+                  sendResult={sendResults[suggestion.id]}
+                />
               ))}
             </div>
           )}
