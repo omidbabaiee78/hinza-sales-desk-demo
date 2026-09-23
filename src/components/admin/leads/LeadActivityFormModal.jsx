@@ -11,6 +11,7 @@ import '../../common/Modal.css'
 export default function LeadActivityFormModal({ leadId, activityType, onSaved, onCancel }) {
   const [note, setNote] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
+  const [completeFollowUp, setCompleteFollowUp] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -20,7 +21,7 @@ export default function LeadActivityFormModal({ leadId, activityType, onSaved, o
     setSubmitting(true)
     const nextFollowUpAt = followUpIsoFromDate(followUpDate)
     try {
-      await addLeadActivity(leadId, { activityType, note, nextFollowUpAt })
+      await addLeadActivity(leadId, { activityType, note, nextFollowUpAt, clearFollowUp: completeFollowUp })
       onSaved({ note, nextFollowUpAt })
     } catch (err) {
       setError(err.message || 'ثبت فعالیت با خطا مواجه شد.')
@@ -31,16 +32,20 @@ export default function LeadActivityFormModal({ leadId, activityType, onSaved, o
   return (
     <div className="modal-overlay" onClick={submitting ? undefined : onCancel}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <h2>ثبت {leadActivityTypeLabel(activityType)}</h2>
+        <h2>{activityType === 'phone' ? 'نتیجه تماس' : `ثبت ${leadActivityTypeLabel(activityType)}`}</h2>
         <form onSubmit={handleSubmit}>
           <label>
-            یادداشت
-            <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+            {activityType === 'phone' ? 'چه نتیجه‌ای گرفتید؟' : 'یادداشت'}
+            <textarea rows={3} value={note} required={activityType === 'phone'} onChange={(e) => setNote(e.target.value)} />
           </label>
           <label>
-            پیگیری بعدی (اختیاری)
-            <JalaliDateInput value={followUpDate} onChange={setFollowUpDate} />
+            پیگیری بعدی (اگر لازم است)
+            <JalaliDateInput value={followUpDate} onChange={(value) => { setFollowUpDate(value); if (value) setCompleteFollowUp(false) }} />
           </label>
+          {activityType === 'phone' && !followUpDate && <label className="product-form-availability">
+            <input type="checkbox" checked={completeFollowUp} onChange={(e) => setCompleteFollowUp(e.target.checked)} />
+            پیگیری تمام شد؛ موعد قبلی پاک شود
+          </label>}
           <ErrorBanner message={error} />
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>

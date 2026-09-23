@@ -9,3 +9,16 @@
   gap: 8px;
   margin-bottom: 16px;
 }
+
+.admin-hub-more summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--text-muted);
+}
+
+.admin-hub-more-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+}

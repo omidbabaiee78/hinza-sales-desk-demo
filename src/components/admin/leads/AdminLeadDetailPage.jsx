@@ -23,7 +23,6 @@ import '../../common/DataTable.css'
 import './Leads.css'
 
 const QUICK_ACTIVITY_BUTTONS = [
-  { type: 'phone', label: 'ثبت تماس' },
   { type: 'note', label: 'ثبت یادداشت' },
   { type: 'meeting', label: 'ثبت جلسه' },
   { type: 'sample', label: 'ثبت نمونه' },
@@ -38,6 +37,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
   const { admins } = useAdminProfiles()
 
   const [activeModal, setActiveModal] = useState(null) // 'edit' | 'status' | 'lost' | 'convert' | activityType
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   if (loading) return <LoadingScreen text="در حال بارگذاری سرنخ..." />
   if (error) return <ErrorBanner message={error} onRetry={refresh} />
@@ -67,8 +67,18 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
         </h2>
       </div>
 
+      <div className="lead-primary-actions">
+        <LeadQuickContact phone={lead.mobile || lead.phone} />
+        {!isTerminal && <button type="button" className="btn-primary" onClick={() => setActiveModal('phone')}>ثبت نتیجه تماس و پیگیری بعدی</button>}
+        <button type="button" className="btn-secondary" onClick={() => setActiveModal('edit')}>ویرایش اطلاعات</button>
+        <button type="button" className="btn-secondary" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
+          {showAdvanced ? 'بستن گزینه‌های بیشتر' : 'گزینه‌های بیشتر'}
+        </button>
+      </div>
+      <div className="lead-primary-followup">پیگیری بعدی: <LeadFollowUpBadge nextFollowUpAt={lead.next_follow_up_at} /></div>
+
       <div className="lead-detail-grid">
-        <section className="lead-detail-card">
+        {showAdvanced && <section className="lead-detail-card">
           <h3>هوش سرنخ</h3>
           <LeadReadinessBadge lead={lead} showReasons />
           <div className="info-row">
@@ -91,7 +101,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
               </span>
             </div>
           )}
-        </section>
+        </section>}
 
         <section className="lead-detail-card">
           <h3>اطلاعات سرنخ</h3>
@@ -121,7 +131,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
               {lead.email || '—'}
             </span>
           </div>
-          <div className="info-row">
+          {showAdvanced && <><div className="info-row">
             <span className="info-label">وب‌سایت</span>
             <span className="info-value" dir="ltr">
               {lead.website ? (
@@ -202,7 +212,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             <span className="info-value">
               {lead.last_contact_at ? formatJalaliDateTime(lead.last_contact_at) : '—'}
             </span>
-          </div>
+          </div></>}
           <div className="info-row">
             <span className="info-label">پیگیری بعدی</span>
             <span className="info-value">
@@ -223,10 +233,9 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
           )}
         </section>
 
-        <section className="lead-detail-card">
+        {showAdvanced && <section className="lead-detail-card">
           <h3>اقدامات</h3>
           <div className="lead-quick-actions-grid">
-            <LeadQuickContact phone={lead.mobile || lead.phone} />
             {!isTerminal &&
               QUICK_ACTIVITY_BUTTONS.map((btn) => (
                 <button
@@ -243,9 +252,6 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
                 تغییر وضعیت
               </button>
             )}
-            <button type="button" className="btn-secondary" onClick={() => setActiveModal('edit')}>
-              ویرایش
-            </button>
             {!isTerminal && (
               <>
                 <button type="button" className="btn-primary" onClick={() => setActiveModal('convert')}>
@@ -270,7 +276,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
               </button>
             )}
           </div>
-        </section>
+        </section>}
       </div>
 
       <h3>تاریخچه فعالیت</h3>
@@ -311,7 +317,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
           onCancel={closeModal}
         />
       )}
-      {QUICK_ACTIVITY_BUTTONS.some((b) => b.type === activeModal) && (
+      {(activeModal === 'phone' || QUICK_ACTIVITY_BUTTONS.some((b) => b.type === activeModal)) && (
         <LeadActivityFormModal
           leadId={lead.id}
           activityType={activeModal}

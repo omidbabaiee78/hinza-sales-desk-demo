@@ -173,6 +173,9 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
               ایمیل
               <input type="email" dir="ltr" value={fields.email} onChange={(e) => setField('email', e.target.value)} />
             </label>
+            <details className="lead-form-span-2 lead-form-more">
+              <summary>اطلاعات تکمیلی</summary>
+              <div className="lead-form-grid">
             <label>
               وب‌سایت
               <input
@@ -249,6 +252,8 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
                 </select>
               </label>
             )}
+              </div>
+            </details>
             <label>
               پیگیری بعدی
               <JalaliDateInput
@@ -277,15 +282,17 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
             />
           </label>
 
-          <label>
-            یادداشت
-            <textarea rows={3} value={fields.notes} onChange={(e) => setField('notes', e.target.value)} />
-          </label>
-
-          <label>
-            تگ‌ها
-            <LeadTagsEditor tags={tags} onChange={setTags} />
-          </label>
+          <details className="lead-form-more">
+            <summary>یادداشت و تگ‌ها</summary>
+            <label>
+              یادداشت
+              <textarea rows={3} value={fields.notes} onChange={(e) => setField('notes', e.target.value)} />
+            </label>
+            <label>
+              تگ‌ها
+              <LeadTagsEditor tags={tags} onChange={setTags} />
+            </label>
+          </details>
 
           <label className="product-form-availability">
             <input

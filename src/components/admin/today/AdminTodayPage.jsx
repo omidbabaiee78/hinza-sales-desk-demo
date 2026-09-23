@@ -50,6 +50,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
   const { queue, firstContactItems, loading, error, refresh, smartSuggestions } = useTodayQueue()
   const [typeFilter, setTypeFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [quickFollowUpLeadId, setQuickFollowUpLeadId] = useState(null)
 
   const flatItems = useMemo(() => queue.flatMap((entry) => (entry.kind === 'group' ? entry.items : [entry])), [queue])
@@ -72,11 +73,12 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
   const filteredQueue = useMemo(() => {
     const typeDef = TYPE_FILTERS.find((f) => f.key === typeFilter)
     return queue.filter((entry) => {
+      if (!showAdvanced && entryTypes(entry).every((t) => t === TODAY_ACTION_TYPES.SMART_MESSAGE_SUGGESTION)) return false
       if (typeDef?.types && !entryTypes(entry).some((t) => typeDef.types.includes(t))) return false
       if (priorityFilter !== 'all' && priorityBucketForTier(entryTier(entry)) !== priorityFilter) return false
       return true
     })
-  }, [queue, typeFilter, priorityFilter])
+  }, [queue, typeFilter, priorityFilter, showAdvanced])
 
   const handlers = {
     onOpenLead,
@@ -89,35 +91,6 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
     onOpenOutreach: () => onNavigate('outreach'),
     suggestionActions: smartSuggestions,
   }
-
-  const groupedSections = [
-    {
-      key: 'leads',
-      title: 'سرنخ‌ها',
-      items: flatItems.filter((i) =>
-        [TODAY_ACTION_TYPES.LEAD_FOLLOWUP_OVERDUE, TODAY_ACTION_TYPES.LEAD_FOLLOWUP_TODAY].includes(i.type),
-      ),
-    },
-    {
-      key: 'orders',
-      title: 'سفارش‌ها',
-      items: flatItems.filter((i) =>
-        [TODAY_ACTION_TYPES.ORDER_ADMIN_ACTION, TODAY_ACTION_TYPES.QUOTE_WAITING_CUSTOMER, TODAY_ACTION_TYPES.READY_FOR_DELIVERY].includes(
-          i.type,
-        ),
-      ),
-    },
-    {
-      key: 'financial',
-      title: 'مالی',
-      items: flatItems.filter((i) => [TODAY_ACTION_TYPES.INVOICE_OVERDUE, TODAY_ACTION_TYPES.INVOICE_DUE_SOON].includes(i.type)),
-    },
-    {
-      key: 'messages',
-      title: 'پیشنهادهای هوشمند',
-      items: flatItems.filter((i) => i.type === TODAY_ACTION_TYPES.SMART_MESSAGE_SUGGESTION),
-    },
-  ]
 
   const isEmpty = !loading && filteredQueue.length === 0
   const showFirstContact = !loading && (flatItems.length === 0 || flatItems.length < 5) && firstContactItems.length > 0
@@ -134,36 +107,40 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
         <button type="button" className="btn-secondary" onClick={refresh}>
           به‌روزرسانی
         </button>
+        <button type="button" className="btn-secondary" aria-expanded={showAdvanced} onClick={() => { setShowAdvanced((value) => !value); setTypeFilter('all'); setPriorityFilter('all') }}>
+          {showAdvanced ? 'بستن گزینه‌های بیشتر' : 'گزینه‌های بیشتر'}
+        </button>
       </div>
 
       <ErrorBanner message={error} onRetry={refresh} />
 
-      <TodayProspectingSummary onOpenProspecting={() => onNavigate('prospecting')} />
+      {showAdvanced && <TodayProspectingSummary onOpenProspecting={() => onNavigate('prospecting')} />}
 
       <div className="today-summary-grid">
-        <button type="button" className="today-summary-card tone-lost" onClick={() => setTypeFilter('lead')}>
+        <button type="button" className="today-summary-card tone-lost" onClick={() => setTypeFilter((value) => value === 'lead' ? 'all' : 'lead')}>
           <span className="today-summary-value">{loading ? '—' : counts.overdue}</span>
           <span className="today-summary-label">پیگیری عقب‌افتاده</span>
         </button>
-        <button type="button" className="today-summary-card tone-offer" onClick={() => setTypeFilter('lead')}>
+        <button type="button" className="today-summary-card tone-offer" onClick={() => setTypeFilter((value) => value === 'lead' ? 'all' : 'lead')}>
           <span className="today-summary-value">{loading ? '—' : counts.today}</span>
           <span className="today-summary-label">پیگیری امروز</span>
         </button>
-        <button type="button" className="today-summary-card tone-contacted" onClick={() => setTypeFilter('order')}>
+        <button type="button" className="today-summary-card tone-contacted" onClick={() => setTypeFilter((value) => value === 'order' ? 'all' : 'order')}>
           <span className="today-summary-value">{loading ? '—' : counts.orders}</span>
           <span className="today-summary-label">سفارش نیازمند اقدام</span>
         </button>
-        <button type="button" className="today-summary-card tone-lost" onClick={() => setTypeFilter('financial')}>
+        <button type="button" className="today-summary-card tone-lost" onClick={() => setTypeFilter((value) => value === 'financial' ? 'all' : 'financial')}>
           <span className="today-summary-value">{loading ? '—' : counts.financial}</span>
           <span className="today-summary-label">مطالبات</span>
         </button>
-        <button type="button" className="today-summary-card tone-won" onClick={() => setTypeFilter('message')}>
+        {showAdvanced && <button type="button" className="today-summary-card tone-won" onClick={() => setTypeFilter('message')}>
           <span className="today-summary-value">{loading ? '—' : counts.suggestions}</span>
           <span className="today-summary-label">پیشنهاد هوشمند</span>
-        </button>
+        </button>}
       </div>
+      {typeFilter !== 'all' && <button type="button" className="btn-link" onClick={() => setTypeFilter('all')}>نمایش همهٔ کارها</button>}
 
-      <div className="today-filters">
+      {showAdvanced && <div className="today-filters">
         <div className="today-filter-group">
           {TYPE_FILTERS.map((f) => (
             <button
@@ -188,7 +165,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
             </button>
           ))}
         </div>
-      </div>
+      </div>}
 
       <section className="today-section">
         <h3>کارهای پیشنهادی امروز</h3>
@@ -211,7 +188,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
         )}
       </section>
 
-      {showFirstContact && (
+      {showAdvanced && showFirstContact && (
         <section className="today-section">
           <h3>مشتریان بالقوه پیشنهادی برای تماس</h3>
           <p className="lead-form-hint">پیشنهاد برای توسعه فروش — بر اساس آمادگی پیگیری سرنخ‌های جدید</p>
@@ -222,23 +199,6 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
           </div>
         </section>
       )}
-
-      {!loading &&
-        groupedSections.map(
-          (section) =>
-            section.items.length > 0 && (
-              <section key={section.key} className="today-section today-section-compact">
-                <h3>
-                  {section.title} <span className="today-section-count">({section.items.length})</span>
-                </h3>
-                <div className="today-item-list">
-                  {section.items.map((item) => (
-                    <TodayItemCard key={item.id} entry={{ kind: 'item', ...item }} handlers={handlers} />
-                  ))}
-                </div>
-              </section>
-            ),
-        )}
 
       {quickFollowUpLeadId && (
         <LeadActivityFormModal
