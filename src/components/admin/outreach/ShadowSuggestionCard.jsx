@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { formatJalaliDateTime } from '../../../utils/formatters'
 import { outreachChannelLabel, outreachStatusLabel, shadowSuggestionStatusLabel } from '../../../outreach/outreachLabels'
 import MessagePreviewModal from '../../crm/MessagePreviewModal'
+import FirstEmailConfirmModal from './FirstEmailConfirmModal'
+import DoNotContactConfirmModal from './DoNotContactConfirmModal'
+import { emailSubjectFor } from '../../../outreach/sendGate'
 
 function isoDateNDaysFromNow(n) {
   const d = new Date()
@@ -13,19 +16,57 @@ const SEND_STATUS_LABELS = {
   not_sent: 'ارسال نشده',
   ready_to_send: 'آماده ارسال',
   sending: 'در حال ارسال...',
-  sent: 'ارسال‌شده',
+  // send_status is only ever set by a PRODUCTION send - sendPipeline.js
+  // never touches it for a test send - so 'sent' always means the prospect.
+  sent: 'ارسال‌شده به مشتری',
   failed: 'ارسال ناموفق',
 }
 
 // Phase 26 - approve()/edit() still only ever mark this row approved-for-
-// future-send (never sends anything by themselves). "ارسال آزمایشی" is the
-// ONE new action that can trigger a REAL provider call - but ALWAYS in test
-// mode (see services/outreachSend.js) - this UI never exposes a production
-// send button in this phase, matching the phase's explicit scope (STEP 5/
-// 15: manual approval required, real customer sends must stay impossible
-// until credentials + a later, separate go-live decision).
-export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers, sending, sendResult }) {
+// future-send (never sends anything by themselves). "ارسال آزمایشی" always
+// goes to the test recipient (see services/outreachSend.js).
+//
+// "ارسال اولین ایمیل" is the one production action: email channel only,
+// one approved suggestion per admin click, behind a read-only confirmation
+// showing the exact recipient/subject/body. It is offered only when the
+// suggestion isn't already sent/in flight AND firstEmailCheck (the same
+// sendGate.js checks the server runs, pre-evaluated in useOutreachShadow)
+// passes - otherwise a short Persian reason is shown instead. It is also
+// disabled while ANY send on the page is in flight. The server re-runs the
+// full gate on every click and stays the source of truth. WhatsApp has no
+// production action here.
+// One line per delivery state from sendGate.js classifySendAttempts - a
+// test delivery is always labelled as the admin's test inbox, never as the
+// prospect. Returns '' when there is no provider-send history yet.
+const SEND_HISTORY_LABELS = [
+  ['realDelivered', 'ارسال‌شده به مشتری'],
+  ['testDelivered', 'آزمایشی (فقط به نشانی آزمایشی شما)'],
+  ['realUncertain', 'نامشخص - نیاز به بررسی دستی'],
+  ['testUncertain', 'آزمایشی نامشخص'],
+  ['ambiguous', 'سابقه مبهم - نیاز به بررسی دستی'],
+  ['failedOrBlocked', 'ناموفق یا مسدود'],
+]
+
+function sendHistorySummary(history) {
+  if (!history) return ''
+  return SEND_HISTORY_LABELS.filter(([key]) => history[key] > 0)
+    .map(([key, label]) => `${label}: ${history[key]}`)
+    .join(' · ')
+}
+
+function firstEmailBlockReasons(suggestion, recipientEmail, messageText, firstEmailCheck) {
+  if (suggestion.send_status === 'sent') return ['این ایمیل قبلاً برای مشتری ارسال شده است.']
+  if (suggestion.send_status === 'sending') return ['ارسال قبلی این ایمیل به مشتری هنوز نتیجه قطعی ندارد و باید دستی بررسی شود.']
+  if (!recipientEmail) return ['این سرنخ نشانی ایمیل ندارد.']
+  if (!messageText?.trim()) return ['متن پیام خالی است.']
+  if (!firstEmailCheck) return ['در حال بررسی شرایط ارسال...']
+  return firstEmailCheck.allowed ? [] : firstEmailCheck.reasons
+}
+
+export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers, sending, anySending, firstEmailCheck, sendResult }) {
   const [editing, setEditing] = useState(false)
+  const [confirmingEmail, setConfirmingEmail] = useState(false)
+  const [confirmingOptOut, setConfirmingOptOut] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const lead = suggestion.sales_leads
@@ -35,6 +76,12 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers,
   const isDecided = ['approved', 'edited', 'dismissed'].includes(suggestion.status)
   const canSendTest = ['approved', 'edited'].includes(suggestion.status) && suggestion.send_status !== 'sent'
   const messageText = suggestion.message_final || suggestion.message_draft
+  const recipientEmail = lead?.email?.trim() || ''
+  const isFirstEmailCandidate = suggestion.channel === 'email' && ['approved', 'edited'].includes(suggestion.status)
+  const firstEmailBlocked = isFirstEmailCandidate ? firstEmailBlockReasons(suggestion, recipientEmail, messageText, firstEmailCheck) : []
+  const canSendFirstEmail = isFirstEmailCandidate && firstEmailBlocked.length === 0
+  const isFirstEmailResult = sendResult?.kind === 'first_email'
+  const sendLabel = isFirstEmailResult ? 'ارسال ایمیل' : 'ارسال آزمایشی'
 
   async function run(fn, ...args) {
     setBusy(true)
@@ -84,11 +131,16 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers,
           <div className="prospect-evidence-box">
             {sendResult.ok ? (
               <p className="lead-form-hint">
-                ارسال آزمایشی موفق بود — ارائه‌دهنده: {sendResult.provider || '—'} | شناسه پیام: {sendResult.providerMessageId || '—'}
+                {sendResult.testMode
+                  ? isFirstEmailResult
+                    ? 'حالت آزمایشی سیستم روشن است؛ این ایمیل فقط به نشانی آزمایشی شما رفت، نه به مشتری.'
+                    : 'ارسال آزمایشی موفق بود؛ فقط به نشانی آزمایشی شما رفت، نه به مشتری.'
+                  : 'ارسال واقعی ثبت شد: سرویس ایمیل پیام را برای نشانی مشتری پذیرفت (تأیید تحویل به صندوق مشتری نیست).'}{' '}
+                ارائه‌دهنده: {sendResult.provider || '—'} | شناسه پیام: {sendResult.providerMessageId || '—'}
               </p>
             ) : (
               <>
-                <p className="lead-form-hint">ارسال آزمایشی انجام نشد:</p>
+                <p className="lead-form-hint">{sendLabel} انجام نشد:</p>
                 <ul className="outreach-reason-list">
                   {(sendResult.reasons || [sendResult.errorMessage || 'خطای نامشخص']).map((r) => (
                     <li key={r}>{r}</li>
@@ -133,13 +185,64 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers,
         )}
 
         {canSendTest && (
-          <button type="button" className="btn-link" disabled={sending} onClick={() => handlers.sendTest(suggestion.id)}>
-            {sending ? 'در حال ارسال آزمایشی...' : 'ارسال آزمایشی (Send Test)'}
+          <button type="button" className="btn-link" disabled={anySending} onClick={() => handlers.sendTest(suggestion.id)}>
+            {sending ? 'در حال ارسال...' : 'ارسال آزمایشی (Send Test)'}
           </button>
         )}
+
+        {canSendFirstEmail && (
+          <button type="button" className="btn-link" disabled={anySending} onClick={() => setConfirmingEmail(true)}>
+            ارسال اولین ایمیل به مشتری
+          </button>
+        )}
+
+        {/* Opt-out ("«لغو»" reply, or any stop request) - sets
+            sales_leads.do_not_contact, which the server send gate blocks on. */}
+        {suggestion.lead_id && handlers.markDoNotContact && !lead?.do_not_contact && (
+          <button type="button" className="btn-link btn-link-danger" disabled={busy} onClick={() => setConfirmingOptOut(true)}>
+            ثبت لغو دریافت (عدم تماس)
+          </button>
+        )}
+        {lead?.do_not_contact && <span className="lead-status-badge tone-lost">عدم تماس</span>}
       </div>
 
-      {canSendTest && <p className="outreach-test-mode-banner">حالت آزمایشی — ارسال واقعی به مشتریان غیرفعال است</p>}
+      {isFirstEmailCandidate && firstEmailBlocked.length > 0 && (
+        <p className="lead-form-hint">
+          ارسال اولین ایمیل فعلاً ممکن نیست: {firstEmailBlocked[0]}
+          {firstEmailBlocked.length > 1 && ` (و ${firstEmailBlocked.length - 1} مورد دیگر)`}
+        </p>
+      )}
+
+      {isFirstEmailCandidate && sendHistorySummary(firstEmailCheck?.history) && (
+        <p className="lead-form-hint">سابقه ارسال: {sendHistorySummary(firstEmailCheck.history)}</p>
+      )}
+
+      {canSendTest && !canSendFirstEmail && <p className="outreach-test-mode-banner">حالت آزمایشی — ارسال واقعی به مشتریان غیرفعال است</p>}
+
+      {confirmingEmail && (
+        <FirstEmailConfirmModal
+          recipientName={displayName}
+          recipientEmail={recipientEmail}
+          subject={emailSubjectFor(suggestion)}
+          message={messageText}
+          onConfirm={async () => {
+            setConfirmingEmail(false)
+            await handlers.sendFirstEmail(suggestion.id)
+          }}
+          onCancel={() => setConfirmingEmail(false)}
+        />
+      )}
+
+      {confirmingOptOut && (
+        <DoNotContactConfirmModal
+          companyLabel={displayName}
+          onConfirm={async () => {
+            await handlers.markDoNotContact(suggestion.lead_id)
+            setConfirmingOptOut(false)
+          }}
+          onCancel={() => setConfirmingOptOut(false)}
+        />
+      )}
 
       {editing && (
         <MessagePreviewModal

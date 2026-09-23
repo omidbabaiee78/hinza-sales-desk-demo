@@ -3,7 +3,17 @@
 // `node scripts/checkOutreachSend.mjs`.
 
 import assert from 'node:assert/strict'
-import { evaluateSendGate, resolveRealRecipient, maskRecipient } from '../src/outreach/sendGate.js'
+import {
+  evaluateSendGate,
+  resolveRealRecipient,
+  maskRecipient,
+  classifySendAttempts,
+  previewFirstEmailSend,
+  AMBIGUOUS_PRIOR_DELIVERY_REASON,
+  buildEmailBody,
+  emailSubjectFor,
+  EMAIL_OPT_OUT_FOOTER,
+} from '../src/outreach/sendGate.js'
 import { attemptSend, classifyOutcome } from '../src/outreach/sendPipeline.js'
 import { sendWhatsApp } from '../src/outreach/providers/whatsappProvider.js'
 import { sendEmail } from '../src/outreach/providers/emailProvider.js'
@@ -1421,6 +1431,263 @@ await check('the shadow outreach cycle never calls a provider and never writes t
   } finally {
     restoreFetch()
   }
+})
+
+// ---------------------------------------------------------------------------
+// Controlled first REAL email (admin outreach page) - test vs real delivery,
+// duplicates, concurrency, and ambiguous older records. Email channel, with
+// provider_test_mode persisted OFF unless a check says otherwise.
+// ---------------------------------------------------------------------------
+
+function firstEmailClient({ testModeOn = false } = {}) {
+  const client = makeFakeClient()
+  client.tables.automation_settings[0].provider_test_mode = testModeOn
+  client.tables.prospect_outreach_suggestions.push(baseSuggestion({ channel: 'email', status: 'edited', message_final: 'متن نهایی ایمیل' }))
+  return client
+}
+
+const realEmailSend = (client) =>
+  attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: validCredentials, testRecipients, now: noon })
+const testEmailSend = (client) =>
+  attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: true, credentials: validCredentials, testRecipients, now: noon })
+
+function previewFor(client) {
+  return previewFirstEmailSend({
+    suggestion: client.tables.prospect_outreach_suggestions[0],
+    lead: client.tables.sales_leads[0],
+    settings: client.tables.automation_settings[0],
+    leadAttempts: client.tables.outreach_attempts,
+    now: noon,
+  })
+}
+
+function recordingProvider(recipients) {
+  return async (_url, init) => {
+    recipients.push(JSON.parse(init.body).to[0])
+    return jsonFetchResponse({ id: `resend-${recipients.length}` })
+  }
+}
+
+await check('first email: test-then-real - a confirmed TEST delivery neither consumes the real key nor blocks the first real email, which reaches the prospect', async () => {
+  const client = firstEmailClient()
+  const recipients = []
+  mockFetch(recordingProvider(recipients))
+  try {
+    assert.equal((await testEmailSend(client)).ok, true)
+    const afterTest = previewFor(client)
+    assert.equal(afterTest.allowed, true, 'the UI pre-check must still offer the real send: ' + JSON.stringify(afterTest.reasons))
+    assert.equal(afterTest.history.testDelivered, 1)
+    assert.equal(afterTest.history.realDelivered, 0, 'a test delivery must never be counted as delivery to the prospect')
+
+    const real = await realEmailSend(client)
+    assert.equal(real.ok, true, JSON.stringify(real))
+    assert.equal(real.testMode, false)
+    assert.deepEqual(recipients, [testRecipients.email, 'contact@example.com'], 'the test went to the test inbox, the real send to the prospect')
+    const realAttempt = client.tables.outreach_attempts.find((a) => a.idempotency_key === 'send:sugg-1' && a.status === 'sent')
+    assert.equal(realAttempt.test_mode, false)
+    assert.equal(previewFor(client).history.realDelivered, 1)
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: while provider_test_mode is on, the UI pre-check never offers a real send, and the server never uses the prospect address', async () => {
+  const client = firstEmailClient({ testModeOn: true })
+  const recipients = []
+  mockFetch(recordingProvider(recipients))
+  try {
+    const preview = previewFor(client)
+    assert.equal(preview.allowed, false)
+    assert.ok(preview.reasons[0].includes('حالت آزمایشی'), 'the test-mode reason must come first: ' + preview.reasons[0])
+    const result = await realEmailSend(client) // a stale UI still calling the server
+    assert.equal(result.testMode, true)
+    assert.ok(!recipients.includes('contact@example.com'), 'the prospect must never be emailed while provider_test_mode is on')
+    assert.equal(client.tables.outreach_attempts.some((a) => a.idempotency_key === 'send:sugg-1'), false, 'the real key must stay untouched')
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: real-then-real - a confirmed REAL delivery blocks a second real send (server and UI), provider called once', async () => {
+  const client = firstEmailClient()
+  const recipients = []
+  mockFetch(recordingProvider(recipients))
+  try {
+    assert.equal((await realEmailSend(client)).ok, true)
+    const second = await realEmailSend(client)
+    assert.equal(second.ok, false)
+    assert.equal(recipients.length, 1, 'the provider must never be called for the duplicate')
+    const preview = previewFor(client)
+    assert.equal(preview.allowed, false)
+    assert.ok(preview.reasons.some((r) => r.includes('قبلاً برای مشتری ارسال شده')), JSON.stringify(preview.reasons))
+    assert.equal(client.tables.prospect_outreach_suggestions[0].send_status, 'sent')
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: two concurrent real sends for the same suggestion - exactly one reaches the provider', async () => {
+  const client = firstEmailClient()
+  let providerCalls = 0
+  mockFetch(async () => {
+    providerCalls += 1
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    return jsonFetchResponse({ id: 'resend-race' })
+  })
+  try {
+    const results = await Promise.all([realEmailSend(client), realEmailSend(client)])
+    assert.equal(results.filter((r) => r.ok).length, 1, JSON.stringify(results))
+    assert.equal(providerCalls, 1)
+    assert.equal(client.tables.outreach_attempts.filter((a) => a.status === 'sent').length, 1)
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: an uncertain earlier real send (claim held, attempt still prepared) blocks the next one and is shown as uncertain, never as delivered', async () => {
+  const client = firstEmailClient()
+  mockFetch(async () => {
+    const err = new Error('aborted')
+    err.name = 'AbortError'
+    throw err
+  })
+  try {
+    const first = await realEmailSend(client)
+    assert.equal(first.ok, false)
+    const preview = previewFor(client)
+    assert.equal(preview.history.realUncertain, 1)
+    assert.equal(preview.history.realDelivered, 0)
+    assert.equal(preview.allowed, false)
+  } finally {
+    restoreFetch()
+  }
+  let called = false
+  mockFetch(async () => ((called = true), jsonFetchResponse({ id: 'resend-x' })))
+  try {
+    assert.equal((await realEmailSend(client)).ok, false)
+    assert.equal(called, false, 'an uncertain send must never be retried automatically')
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: an ambiguous OLDER record (sent on the real send: key but flagged test_mode=true) blocks the real send with its own reason, is never reported as delivered, and is not guessed', async () => {
+  const client = firstEmailClient()
+  client.tables.outreach_attempts.push({
+    id: 'legacy-1',
+    lead_id: 'lead-1',
+    suggestion_id: 'sugg-1',
+    channel: 'email',
+    status: 'sent',
+    test_mode: true,
+    idempotency_key: 'send:sugg-1',
+    created_at: '2026-09-20T08:00:00Z',
+  })
+  let called = false
+  mockFetch(async () => ((called = true), jsonFetchResponse({ id: 'resend-y' })))
+  try {
+    const result = await realEmailSend(client)
+    assert.equal(result.ok, false)
+    assert.equal(called, false, 'the provider must never be called over an ambiguous record')
+    assert.ok(result.reasons.includes(AMBIGUOUS_PRIOR_DELIVERY_REASON), JSON.stringify(result.reasons))
+    assert.ok(!result.reasons.some((r) => r.includes('برای مشتری ارسال شده')), 'must not claim the prospect received it')
+    const legacy = client.tables.outreach_attempts.find((a) => a.id === 'legacy-1')
+    assert.equal(legacy.status, 'sent')
+    assert.equal(legacy.test_mode, true, 'existing records are never altered')
+
+    const preview = previewFor(client)
+    assert.equal(preview.allowed, false)
+    assert.equal(preview.history.realKeyAmbiguous, 1)
+    assert.equal(preview.history.realDelivered, 0)
+    assert.ok(preview.reasons.includes(AMBIGUOUS_PRIOR_DELIVERY_REASON))
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: the real email body is exactly the confirmed message + opt-out footer, and the audit snapshot records that exact body and subject', async () => {
+  const client = firstEmailClient()
+  let sentBody = null
+  let sentSubject = null
+  mockFetch(async (_url, init) => {
+    const payload = JSON.parse(init.body)
+    sentBody = payload.text
+    sentSubject = payload.subject
+    return jsonFetchResponse({ id: 'resend-body' })
+  })
+  try {
+    assert.equal((await realEmailSend(client)).ok, true)
+    assert.equal(sentBody, buildEmailBody('متن نهایی ایمیل'))
+    assert.ok(sentBody.includes(EMAIL_OPT_OUT_FOOTER), 'every email must carry the opt-out instruction')
+    assert.equal(sentSubject, emailSubjectFor(client.tables.prospect_outreach_suggestions[0]))
+    const attempt = client.tables.outreach_attempts.find((a) => a.status === 'sent')
+    assert.equal(attempt.message_snapshot, sentBody)
+    assert.equal(attempt.subject_snapshot, sentSubject)
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: an opt-out (lead marked do_not_contact) blocks the real send on the server and in the UI pre-check, provider never called', async () => {
+  const client = firstEmailClient()
+  client.tables.sales_leads[0].do_not_contact = true
+  let called = false
+  mockFetch(async () => ((called = true), jsonFetchResponse({ id: 'resend-dnc' })))
+  try {
+    const result = await realEmailSend(client)
+    assert.equal(result.ok, false)
+    assert.equal(called, false)
+    assert.ok(result.reasons.some((r) => r.includes('عدم تماس')), JSON.stringify(result.reasons))
+    assert.equal(previewFor(client).allowed, false)
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('first email: a BLOCKED attempt (sending switched off) is recorded as cancelled, never as delivered, and does not block a later real send once allowed', async () => {
+  const client = firstEmailClient()
+  client.tables.automation_settings[0].outreach_enabled = false
+  const recipients = []
+  mockFetch(recordingProvider(recipients))
+  try {
+    const blocked = await realEmailSend(client)
+    assert.equal(blocked.ok, false)
+    assert.equal(recipients.length, 0)
+    const row = client.tables.outreach_attempts[0]
+    assert.equal(row.status, 'cancelled')
+    assert.equal(row.error_code, 'send_gate_blocked')
+    const history = previewFor(client).history
+    assert.equal(history.failedOrBlocked, 1)
+    assert.equal(history.realDelivered, 0)
+
+    client.tables.automation_settings[0].outreach_enabled = true
+    const real = await realEmailSend(client)
+    assert.equal(real.ok, true, JSON.stringify(real))
+    assert.deepEqual(recipients, ['contact@example.com'])
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('classifySendAttempts: separates test, real, uncertain, failed/blocked and ambiguous records, and ignores other suggestions', () => {
+  const rows = [
+    { idempotency_key: 'test-send:sugg-1', status: 'sent', test_mode: true },
+    { idempotency_key: 'test-send:sugg-1', status: 'cancelled', test_mode: true },
+    { idempotency_key: 'send:sugg-1', status: 'failed', test_mode: false },
+    { idempotency_key: 'send:sugg-1', status: 'prepared', test_mode: false },
+    { idempotency_key: 'test-send:sugg-1', status: 'sent', test_mode: false },
+    { idempotency_key: 'send:other', status: 'sent', test_mode: false },
+    { idempotency_key: null, status: 'completed' },
+  ]
+  assert.deepEqual(classifySendAttempts(rows, 'sugg-1'), {
+    testDelivered: 1,
+    realDelivered: 0,
+    realUncertain: 1,
+    testUncertain: 0,
+    failedOrBlocked: 2,
+    ambiguous: 1,
+    realKeyAmbiguous: 0,
+  })
 })
 
 console.log(`\n${passed} check(s) passed.`)

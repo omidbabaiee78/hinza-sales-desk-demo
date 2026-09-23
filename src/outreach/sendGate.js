@@ -64,6 +64,29 @@ export function resolveEffectiveTestMode(settings, testMode) {
   return persistedTestMode || explicitTestIntent
 }
 
+// The exact email the provider receives, shared by sendPipeline.js (server)
+// and the admin confirmation dialog so what the admin confirms is what is
+// sent. Every email ends with the opt-out instruction; a «لغو» reply is
+// recognized as do_not_contact by replyIntelligence/classifyReply.js, and
+// once an admin confirms it (reply inbox, or "ثبت لغو دریافت" on the
+// outreach card) sales_leads.do_not_contact blocks every future send below.
+export const DEFAULT_EMAIL_SUBJECT = 'پیام از هینزا پلیمر'
+export const EMAIL_OPT_OUT_FOOTER = 'اگر مایل به دریافت ایمیل از ما نیستید، در پاسخ به همین ایمیل فقط بنویسید «لغو» تا دیگر برایتان ایمیلی ارسال نشود.'
+
+export function emailSubjectFor(suggestion) {
+  return hasUsableText(suggestion?.subject_draft) ? suggestion.subject_draft : DEFAULT_EMAIL_SUBJECT
+}
+
+export function buildEmailBody(message) {
+  return `${(message || '').trim()}\n\n—\n${EMAIL_OPT_OUT_FOOTER}`
+}
+
+// The one idempotency-key formula, shared by sendPipeline.js (server) and
+// previewFirstEmailSend() below (admin UI) so both always agree.
+export function sendIdempotencyKey(suggestionId, testMode) {
+  return testMode ? `test-send:${suggestionId}` : `send:${suggestionId}`
+}
+
 // Returns { allowed, reasons, recipient, realRecipient, testMode }.
 // `credentialsConfigured` and `duplicateIdempotencyExists` are supplied by
 // the caller (sendPipeline.js) since only it has DB/Edge-Function-secret
@@ -75,6 +98,10 @@ export function evaluateSendGate({
   leadAttempts = [],
   credentialsConfigured = false,
   duplicateIdempotencyExists = false,
+  // A prior 'sent' attempt on THIS key whose test_mode contradicts the key
+  // (see classifySendAttempts) - delivery mode can't be determined, so it
+  // blocks like a duplicate, with its own reason, until reconciled.
+  ambiguousPriorDelivery = false,
   testMode,
   // { whatsapp: 'E.164 test number' | null, email: 'test@address' | null } -
   // read from Edge Function secrets by the caller, never from settings/DB.
@@ -157,7 +184,18 @@ export function evaluateSendGate({
   }
 
   if (duplicateIdempotencyExists) {
-    reasons.push('این پیام قبلاً با همین کلید یکتا ارسال شده است (idempotency) - ارسال مجدد مجاز نیست.')
+    // Same block either way - only the wording says which kind of delivery
+    // the existing key belongs to, so a test delivery is never reported as
+    // having reached the prospect.
+    reasons.push(
+      effectiveTestMode
+        ? 'این پیام قبلاً در حالت آزمایشی فقط به نشانی آزمایشی ارسال شده است، نه به مشتری (idempotency) - ارسال آزمایشی مجدد مجاز نیست.'
+        : 'این پیام قبلاً برای مشتری ارسال شده است (idempotency) - ارسال مجدد مجاز نیست.',
+    )
+  }
+
+  if (ambiguousPriorDelivery) {
+    reasons.push(AMBIGUOUS_PRIOR_DELIVERY_REASON)
   }
 
   const recipient = effectiveTestMode ? (channel === 'whatsapp' ? testRecipients.whatsapp : testRecipients.email) || null : realRecipient
@@ -169,4 +207,93 @@ export function evaluateSendGate({
     realRecipient,
     testMode: effectiveTestMode,
   }
+}
+
+// Sorts one suggestion's provider-send attempts (outreach_attempts rows)
+// into the delivery states the admin must be able to tell apart. Test and
+// real deliveries use separate keys (test-send:<id> / send:<id>) and every
+// attempt records test_mode, so no guessing is needed - EXCEPT when a row's
+// key and test_mode disagree (e.g. a test delivery recorded on the real
+// send: key by an earlier version of the send code). That row is
+// "ambiguous": it is never treated as "the prospect got it" and never as
+// "safe to send" - on the real key it blocks the real send until an admin
+// reconciles it.
+//   testDelivered   - confirmed delivery to the TEST inbox only
+//   realDelivered   - confirmed delivery to the prospect (blocks a real send)
+//   realUncertain   - a real send in flight or with an unknown outcome
+//                     (status 'prepared'; blocks a real send)
+//   testUncertain   - the same, for a test send (never blocks a real send)
+//   failedOrBlocked - confirmed provider rejection or a gate-blocked request
+//                     (status 'failed'/'cancelled'; never blocks)
+//   ambiguous       - key/test_mode mismatch; realKeyAmbiguous counts the
+//                     ones on the real key (those block a real send)
+export function classifySendAttempts(attempts, suggestionId) {
+  const realKey = sendIdempotencyKey(suggestionId, false)
+  const testKey = sendIdempotencyKey(suggestionId, true)
+  const result = { testDelivered: 0, realDelivered: 0, realUncertain: 0, testUncertain: 0, failedOrBlocked: 0, ambiguous: 0, realKeyAmbiguous: 0 }
+  for (const a of attempts || []) {
+    const onRealKey = a.idempotency_key === realKey
+    if (!onRealKey && a.idempotency_key !== testKey) continue
+    if (a.status === 'failed' || a.status === 'cancelled') {
+      result.failedOrBlocked += 1
+      continue
+    }
+    if (a.status !== 'sent' && a.status !== 'prepared') continue
+    const flaggedTest = a.test_mode === true
+    if (onRealKey === flaggedTest) {
+      result.ambiguous += 1
+      if (onRealKey) result.realKeyAmbiguous += 1
+      continue
+    }
+    if (onRealKey) {
+      if (a.status === 'sent') result.realDelivered += 1
+      else result.realUncertain += 1
+    } else if (a.status === 'sent') result.testDelivered += 1
+    else result.testUncertain += 1
+  }
+  return result
+}
+
+export const AMBIGUOUS_PRIOR_DELIVERY_REASON =
+  'سابقه ارسال قبلی این پیام مبهم است (نوع کلید ثبت‌شده با علامت آزمایشی/واقعی آن هم‌خوانی ندارد) و معلوم نیست به مشتری رسیده یا فقط به نشانی آزمایشی. تا بررسی دستی، ارسال مجاز نیست.'
+
+// Admin-UI PRE-CHECK ONLY for the controlled first-email action (a
+// testMode:false request). It runs the SAME evaluateSendGate() with every
+// fact the browser can actually know (settings, lead, the lead's
+// outreach_attempts) and assumes only the two server-only facts pass
+// (credentials and the test-recipient secret), so any reason it returns is
+// one the server would also block on. It can only HIDE the action, never
+// allow a send: the Edge Function re-runs the full gate with real values
+// and remains the source of truth.
+//
+// Judged against the REAL send: key only - a test delivery never counts as
+// delivery to the prospect and never blocks this action. While
+// provider_test_mode is on the action is unavailable outright (the server
+// would route it to the test inbox), with that as the first reason.
+// outreach_send_claims is server-only, so an unresolved real send is
+// detected from its outreach_attempts row ('prepared').
+export function previewFirstEmailSend({ suggestion, lead, settings, leadAttempts = [], now = new Date() }) {
+  const effectiveTestMode = resolveEffectiveTestMode(settings, false)
+  const history = classifySendAttempts(leadAttempts, suggestion?.id)
+  // Most specific reasons come FIRST (the UI shows the first reason).
+  const reasons = []
+  if (effectiveTestMode) {
+    reasons.push('حالت آزمایشی سیستم روشن است؛ ایمیل به مشتری ارسال نمی‌شود (فقط به نشانی آزمایشی). برای آزمایش از «ارسال آزمایشی» استفاده کنید.')
+  }
+  if (history.realDelivered > 0) reasons.push('این ایمیل قبلاً برای مشتری ارسال شده است و ارسال مجدد مجاز نیست.')
+  if (history.realUncertain > 0) reasons.push('ارسال قبلی این ایمیل به مشتری هنوز نتیجه قطعی ندارد و باید دستی بررسی شود.')
+  if (history.realKeyAmbiguous > 0) reasons.push(AMBIGUOUS_PRIOR_DELIVERY_REASON)
+  const gate = evaluateSendGate({
+    suggestion,
+    lead,
+    settings,
+    leadAttempts,
+    credentialsConfigured: true,
+    duplicateIdempotencyExists: false,
+    testMode: false,
+    testRecipients: { email: effectiveTestMode ? 'checked-on-server' : null },
+    now,
+  })
+  reasons.push(...gate.reasons)
+  return { allowed: reasons.length === 0, reasons, testMode: effectiveTestMode, history }
 }

@@ -46,19 +46,22 @@ export default function AdminOutreachPage({ onOpenLead }) {
     lastRun: shadowLastRun,
     sendResults,
     sendingId,
+    firstEmailChecks,
     runShadowNow,
     approve: shadowApprove,
     edit: shadowEdit,
     dismiss: shadowDismiss,
     snooze: shadowSnooze,
     sendTest,
+    sendFirstEmail,
+    markDoNotContact: shadowMarkDoNotContact,
   } = useOutreachShadow()
 
   const [activeTab, setActiveTab] = useState('ready')
   const [overdueOnly, setOverdueOnly] = useState(false)
 
   const handlers = { approve, snooze, dismiss, recordAttempt, recordCompletedAttempt, markDoNotContact, refresh }
-  const shadowHandlers = { approve: shadowApprove, edit: shadowEdit, dismiss: shadowDismiss, snooze: shadowSnooze, sendTest }
+  const shadowHandlers = { approve: shadowApprove, edit: shadowEdit, dismiss: shadowDismiss, snooze: shadowSnooze, sendTest, sendFirstEmail, markDoNotContact: shadowMarkDoNotContact }
 
   const buckets = useMemo(() => {
     const ready = []
@@ -209,6 +212,8 @@ export default function AdminOutreachPage({ onOpenLead }) {
                   onOpenLead={onOpenLead}
                   handlers={shadowHandlers}
                   sending={sendingId === suggestion.id}
+                  anySending={sendingId !== null}
+                  firstEmailCheck={firstEmailChecks[suggestion.id]}
                   sendResult={sendResults[suggestion.id]}
                 />
               ))}

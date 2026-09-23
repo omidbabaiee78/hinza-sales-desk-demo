@@ -19,6 +19,14 @@ const DO_NOT_CONTACT_PATTERNS = [
   /مزاحم\s*نشو/,
   /دیگه\s*مزاحم/,
   /اشتراک.*لغو/,
+  // The outreach email footer (sendGate.js EMAIL_OPT_OUT_FOOTER) asks the
+  // prospect to reply with just «لغو» - a reply that is only that word, or an
+  // explicit "unsubscribe"/"stop receiving" phrase, is an opt-out. A longer
+  // message that merely contains لغو (e.g. cancelling an order) is not.
+  /^[\s«»"'.!؟?]*لغو[\s«»"'.!؟?]*$/,
+  /لغو\s*(اشتراک|دریافت|عضویت|ارسال)/,
+  /ایمیل\s*ن(فرست|فرستید|فرستین|زن|زنید)/,
+  /\bunsubscribe\b/i,
 ]
 
 const WRONG_CONTACT_PATTERNS = [
