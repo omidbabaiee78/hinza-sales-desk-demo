@@ -20,39 +20,122 @@ import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
 import AdminOutreachPage from './outreach/AdminOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
+import AdminProspectingPage from './prospecting/AdminProspectingPage'
+import './today/Today.css'
+import './AdminNavGroups.css'
 
-const NAV_ITEMS = [
-  { key: 'dashboard', label: 'داشبورد' },
-  { key: 'today', label: 'امروز' },
-  { key: 'automation', label: 'اتوماسیون' },
-  { key: 'outreach', label: 'پیگیری فروش' },
-  { key: 'replies', label: 'پاسخ‌ها' },
-  { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
-  { key: 'customers', label: 'مشتریان' },
-  { key: 'crm', label: 'CRM' },
-  { key: 'leads', label: 'سرنخ‌های فروش' },
-  { key: 'orders', label: 'سفارش‌ها' },
-  { key: 'products', label: 'محصولات' },
-  { key: 'invoices', label: 'فاکتورها' },
-  { key: 'payments', label: 'پرداخت‌ها' },
-  { key: 'followUps', label: 'پیگیری‌ها' },
+// ---------------------------------------------------------------------------
+// Phase 26 prep - Admin Information Architecture cleanup.
+//
+// This is a PURE navigation/presentation reorganization. Every existing
+// page/component below is reused completely unchanged; every existing route
+// key (dashboard/today/automation/outreach/replies/prospecting/
+// registrationRequests/customers/crm/leads/orders/products/invoices/
+// payments/followUps/reports) is STILL a valid, directly-linkable activeKey
+// with exactly the same content it always rendered - nothing was deleted,
+// nothing was renamed at the routing level, no business logic/API/Supabase
+// call changed anywhere. Only the SIDEBAR now shows 5 grouped destinations
+// instead of 16 flat ones, with a small sub-tab strip inside each group for
+// its member pages. Old bookmarked URLs (e.g. /admin/leads, /admin/crm,
+// /admin/dashboard) keep working exactly as before - see keyFromPathname().
+//
+// GROUPS is the single source of truth for both the sidebar and each
+// group's sub-navigation tabs. `tabs` is omitted for a group that is just
+// one page (خانه/گزارش‌ها) - no sub-nav is shown for those.
+// ---------------------------------------------------------------------------
+const GROUPS = [
+  { key: 'home', label: 'خانه' },
+  {
+    key: 'sales',
+    label: 'فروش',
+    defaultKey: 'leads',
+    tabs: [
+      { key: 'leads', label: 'سرنخ‌ها' },
+      { key: 'prospecting', label: 'کشف مشتری' },
+      { key: 'outreach', label: 'پیگیری فروش' },
+      { key: 'replies', label: 'پاسخ‌ها' },
+    ],
+  },
+  {
+    key: 'customers',
+    label: 'مشتریان',
+    defaultKey: 'customers',
+    tabs: [
+      { key: 'customers', label: 'لیست مشتریان' },
+      { key: 'crm', label: 'CRM (نمای ۳۶۰)' },
+      { key: 'registrationRequests', label: 'درخواست‌های عضویت' },
+      { key: 'orders', label: 'سفارش‌ها' },
+      { key: 'invoices', label: 'فاکتورها' },
+      { key: 'payments', label: 'پرداخت‌ها' },
+      { key: 'followUps', label: 'پیگیری‌های مالی' },
+    ],
+  },
   { key: 'reports', label: 'گزارش‌ها' },
+  {
+    key: 'system',
+    label: 'سیستم',
+    defaultKey: 'automation',
+    tabs: [
+      { key: 'automation', label: 'اتوماسیون' },
+      { key: 'products', label: 'محصولات' },
+    ],
+  },
 ]
 
+const GROUPS_BY_KEY = new Map(GROUPS.map((g) => [g.key, g]))
+
+// Maps every leaf activeKey (and the two legacy Home aliases) to the group
+// it now lives under - used to highlight the right sidebar item and to pick
+// which group's sub-tabs to show, regardless of which specific page/URL the
+// admin is actually on.
+const GROUP_OF_KEY = (() => {
+  const map = { dashboard: 'home', today: 'home' }
+  for (const group of GROUPS) {
+    map[group.key] = group.key
+    for (const tab of group.tabs || []) map[tab.key] = group.key
+  }
+  return map
+})()
+
+// Every activeKey this app can ever render - unchanged from before this
+// cleanup, plus the new 'home' key. Used only to validate a URL segment; it
+// is NOT what the sidebar displays (see GROUPS/SIDEBAR_ITEMS above/below).
+const ALL_VALID_KEYS = new Set([
+  'home',
+  'dashboard',
+  'today',
+  'automation',
+  'outreach',
+  'replies',
+  'prospecting',
+  'registrationRequests',
+  'customers',
+  'crm',
+  'leads',
+  'orders',
+  'products',
+  'invoices',
+  'payments',
+  'followUps',
+  'reports',
+])
+
+// 'payments' has never had its own dedicated page (same as before this
+// cleanup) - PlaceholderSection is what it has always rendered.
 const PLACEHOLDER_TITLES = {
   payments: 'پرداخت‌ها',
 }
 
-const NAV_KEYS = new Set(NAV_ITEMS.map((item) => item.key))
+const SIDEBAR_ITEMS = GROUPS.map((g) => ({ key: g.key, label: g.label }))
 
-// Maps a URL like /admin/outreach to its nav key - so every admin tab is a
-// real, bookmarkable/deep-linkable route (e.g. /admin/outreach), not just
-// in-memory tab state. An unrecognized or bare /admin path falls back to
-// 'dashboard', same as the app's previous default.
+// Maps a URL like /admin/outreach to its activeKey - so every admin page is
+// still a real, bookmarkable/deep-linkable route, exactly as before. An
+// unrecognized or bare /admin path now falls back to 'home' (previously
+// 'dashboard') - the new operational starting point.
 function keyFromPathname(pathname) {
   const match = /^\/admin\/([a-zA-Z]+)/.exec(pathname || '')
-  const key = match ? match[1] : 'dashboard'
-  return NAV_KEYS.has(key) ? key : 'dashboard'
+  const key = match ? match[1] : 'home'
+  return ALL_VALID_KEYS.has(key) ? key : 'home'
 }
 
 export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }) {
@@ -78,6 +161,13 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
     setSelectedCustomerId(null)
     setSelectedLeadId(null)
     onNavigateUrl?.(`/admin/${key}`)
+  }
+
+  // Sidebar buttons carry a GROUP key (e.g. 'sales'), never a leaf page key
+  // directly - clicking one lands on that group's default/first page.
+  function navigateToGroup(groupKey) {
+    const group = GROUPS_BY_KEY.get(groupKey)
+    navigate(group?.defaultKey || groupKey)
   }
 
   function openInvoice(invoiceId) {
@@ -110,30 +200,48 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
     setSelectedLeadId(leadId)
   }
 
+  const activeGroupKey = GROUP_OF_KEY[activeKey] || activeKey
+  const activeGroup = GROUPS_BY_KEY.get(activeGroupKey)
+
   return (
     <AppShell
       title="پنل هینزا"
       subtitle="مدیریت فروش B2B"
       logo={<BrandLogo size="sm" />}
-      navItems={NAV_ITEMS}
-      activeKey={activeKey}
-      onNavigate={navigate}
+      navItems={SIDEBAR_ITEMS}
+      activeKey={activeGroupKey}
+      onNavigate={navigateToGroup}
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
     >
-      {activeKey === 'dashboard' && (
-        <AdminDashboard
-          onNavigate={navigate}
-          onOpenOrder={openOrder}
-          onOpenCustomer={openCustomer}
-        />
+      {activeGroup?.tabs && (
+        <div className="admin-hub-subnav">
+          {activeGroup.tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`today-chip${activeKey === tab.key ? ' active' : ''}`}
+              onClick={() => navigate(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       )}
-      {activeKey === 'today' && (
+
+      {(activeKey === 'home' || activeKey === 'today') && (
         <AdminTodayPage
           onNavigate={navigate}
           onOpenLead={openLead}
           onOpenOrder={openOrder}
           onOpenInvoice={openInvoice}
+          onOpenCustomer={openCustomer}
+        />
+      )}
+      {activeKey === 'dashboard' && (
+        <AdminDashboard
+          onNavigate={navigate}
+          onOpenOrder={openOrder}
           onOpenCustomer={openCustomer}
         />
       )}
@@ -147,6 +255,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
       )}
       {activeKey === 'outreach' && <AdminOutreachPage onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
+      {activeKey === 'prospecting' && <AdminProspectingPage />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&
         (selectedOrderId ? (

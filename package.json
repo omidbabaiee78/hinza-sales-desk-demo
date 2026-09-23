@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "check:automation": "node scripts/checkAutomationReconciler.mjs",
     "check:outreach": "node scripts/checkOutreachEligibility.mjs",
-    "check:replies": "node scripts/checkReplyIntelligence.mjs"
+    "check:replies": "node scripts/checkReplyIntelligence.mjs",
+    "check:prospecting": "node scripts/checkProspecting.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
