@@ -7,7 +7,7 @@ const tehranDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 })
 
-function tehranDateKey(date) {
+export function tehranDateKey(date = new Date()) {
   return tehranDateFormatter.format(date) // 'YYYY-MM-DD'
 }
 

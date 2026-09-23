@@ -782,3 +782,45 @@
   background: var(--bg);
   color: var(--text-h);
 }
+
+/* Phase 27 - sample tracking card on the lead detail page */
+.lead-samples-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lead-samples-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lead-samples-list li {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.lead-samples-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lead-samples-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+
+.lead-samples-overdue {
+  color: var(--status-lost-text);
+  font-weight: 600;
+}

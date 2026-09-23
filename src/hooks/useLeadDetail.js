@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { fetchLeadSamples } from '../services/leadSamples'
 
 function translateDbError(message) {
   if (!message) return 'خطایی رخ داد. لطفاً دوباره تلاش کنید.'
@@ -29,6 +30,7 @@ export function useLeadDetail(leadId) {
   const [lead, setLead] = useState(null)
   const [products, setProducts] = useState([])
   const [activities, setActivities] = useState([])
+  const [samples, setSamples] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reloadToken, setReloadToken] = useState(0)
@@ -38,11 +40,14 @@ export function useLeadDetail(leadId) {
     let ignore = false
 
     async function load() {
-      const [{ data: leadRow, error: leadError }, { data: productRows }, { data: activityRows }] = await Promise.all([
-        fetchLead(leadId),
-        fetchLeadProducts(leadId),
-        fetchActivities(leadId),
-      ])
+      // Samples load like products/activities: a failure (e.g. before the
+      // phase-27 table exists) just shows an empty list, never blocks the lead.
+      const [
+        { data: leadRow, error: leadError },
+        { data: productRows },
+        { data: activityRows },
+        { data: sampleRows },
+      ] = await Promise.all([fetchLead(leadId), fetchLeadProducts(leadId), fetchActivities(leadId), fetchLeadSamples(leadId)])
       if (ignore) return
       if (leadError) {
         setError(translateDbError(leadError.message))
@@ -53,6 +58,7 @@ export function useLeadDetail(leadId) {
       setLead(leadRow)
       setProducts((productRows || []).map((row) => row.products).filter(Boolean))
       setActivities(activityRows || [])
+      setSamples(sampleRows || [])
       setLoading(false)
     }
 
@@ -67,5 +73,5 @@ export function useLeadDetail(leadId) {
     setReloadToken((token) => token + 1)
   }
 
-  return { lead, products, activities, loading, error, refresh }
+  return { lead, products, activities, samples, loading, error, refresh }
 }
