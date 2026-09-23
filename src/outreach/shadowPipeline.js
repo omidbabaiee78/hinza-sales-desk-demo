@@ -115,7 +115,9 @@ function dedupeKeyFor(leadId) {
 // Main entry point.
 // ---------------------------------------------------------------------------
 
-export async function runShadowOutreachCycle(client, { runType = 'manual', createdBy, settingsOverride = null } = {}) {
+// `now` is injectable only so tests are deterministic (the contact window
+// depends on the clock); every real caller omits it and gets the real time.
+export async function runShadowOutreachCycle(client, { runType = 'manual', createdBy, settingsOverride = null, now: nowOverride } = {}) {
   const fetchedSettings = await fetchAutomationSettings(client)
   const settings = settingsOverride ? { ...fetchedSettings, ...settingsOverride } : fetchedSettings
 
@@ -147,7 +149,7 @@ export async function runShadowOutreachCycle(client, { runType = 'manual', creat
     throw err
   }
 
-  const now = new Date()
+  const now = nowOverride || new Date()
   const stats = {
     leadsScanned: 0,
     eligibleCount: 0,

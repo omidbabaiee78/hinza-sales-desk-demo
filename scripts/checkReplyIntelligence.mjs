@@ -65,6 +65,17 @@ await check('"نیاز نداریم" without a temporal hedge leans not_interest
   assert.equal(result.intentKey, 'not_interested')
 })
 
+// The outreach email footer asks the prospect to reply with just «لغو».
+for (const optOut of ['لغو', '«لغو»', 'لغو.', 'لغو اشتراک', 'لطفا لغو دریافت', 'دیگه ایمیل نفرستید', 'Unsubscribe', 'please unsubscribe me']) {
+  await check(`opt-out reply "${optOut}" -> do_not_contact`, () => {
+    assert.equal(classify(optOut).intentKey, 'do_not_contact')
+  })
+}
+
+await check('a longer message that merely mentions لغو (e.g. cancelling an order) is NOT an opt-out', () => {
+  assert.notEqual(classify('لطفا سفارش قبلی را لغو کنید و قیمت جدید بفرستید').intentKey, 'do_not_contact')
+})
+
 await check('do_not_contact is never overclaimed when only weakly implied', () => {
   const result = classify('قیمت نمی‌خوام بدونم چون فعلا نیاز نداریم')
   assert.notEqual(result.intentKey, 'do_not_contact')

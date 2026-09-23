@@ -11,7 +11,7 @@ import { supabase } from '../lib/supabaseClient'
 // go out (see src/outreach/channels/*.js's disabledExecute()).
 
 export function fetchAllSuggestions() {
-  return supabase.from('prospect_outreach_suggestions').select('*, sales_leads(company_name, contact_name, city, industry)').order('priority', { ascending: true, nullsFirst: false })
+  return supabase.from('prospect_outreach_suggestions').select('*, sales_leads(company_name, contact_name, city, industry, email, status, do_not_contact)').order('priority', { ascending: true, nullsFirst: false })
 }
 
 export async function fetchSuggestionsForLeads(leadIds) {

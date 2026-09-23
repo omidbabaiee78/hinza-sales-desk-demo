@@ -24,7 +24,7 @@
 // the provider is ever called - only one concurrent caller can win it.
 // ---------------------------------------------------------------------------
 
-import { evaluateSendGate, maskRecipient, resolveEffectiveTestMode } from './sendGate.js'
+import { evaluateSendGate, maskRecipient, resolveEffectiveTestMode, sendIdempotencyKey, buildEmailBody, emailSubjectFor } from './sendGate.js'
 import { getProviderSendFn } from './providers/index.js'
 
 // Test and production sends are scoped to DIFFERENT idempotency keys (and
@@ -33,9 +33,9 @@ import { getProviderSendFn } from './providers/index.js'
 // vice versa). Within its own scope, a send is still one-shot: a SECOND
 // test send for the same suggestion is blocked exactly like a second
 // production send would be, once the first has reached a definite outcome.
-function idempotencyKeyFor(suggestionId, testMode) {
-  return testMode ? `test-send:${suggestionId}` : `send:${suggestionId}`
-}
+// Defined in sendGate.js so the admin UI's pre-check (previewFirstEmailSend)
+// derives exactly the same key - never a second copy of the formula.
+const idempotencyKeyFor = sendIdempotencyKey
 
 async function fetchSuggestionWithLead(client, suggestionId) {
   const { data, error } = await client.from('prospect_outreach_suggestions').select('*, sales_leads(*)').eq('id', suggestionId).single()
@@ -56,10 +56,25 @@ async function fetchLeadAttempts(client, leadId) {
   return data || []
 }
 
+// The (at most one - see the partial unique index on status='sent') prior
+// successful attempt on this key, with its recorded test_mode, or null.
 async function existingSentAttempt(client, idempotencyKey) {
-  const { data, error } = await client.from('outreach_attempts').select('id').eq('idempotency_key', idempotencyKey).eq('status', 'sent').maybeSingle()
+  const { data, error } = await client.from('outreach_attempts').select('id, test_mode').eq('idempotency_key', idempotencyKey).eq('status', 'sent').maybeSingle()
   if (error) throw error
-  return Boolean(data)
+  return data || null
+}
+
+// A prior 'sent' row on this key blocks either way. Whether it counts as a
+// normal duplicate or as an ambiguous record depends on whether its own
+// test_mode agrees with the key it sits on (see classifySendAttempts in
+// sendGate.js): e.g. a test-flagged row on the real send: key means the
+// delivery mode can't be determined, so it is never reported as delivered
+// to the prospect and never allowed through - it waits for manual
+// reconciliation instead.
+export function priorSendState(priorSent, effectiveTestMode) {
+  if (!priorSent) return { duplicateIdempotencyExists: false, ambiguousPriorDelivery: false }
+  const agreesWithKey = (priorSent.test_mode === true) === Boolean(effectiveTestMode)
+  return { duplicateIdempotencyExists: agreesWithKey, ambiguousPriorDelivery: !agreesWithKey }
 }
 
 // The ATOMIC claim. Returns true iff THIS call now exclusively owns the
@@ -234,10 +249,11 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
   const effectiveTestMode = resolveEffectiveTestMode(settings, testMode)
   const idempotencyKey = idempotencyKeyFor(suggestionId, effectiveTestMode)
 
-  const [leadAttempts, duplicateIdempotencyExists] = await Promise.all([
+  const [leadAttempts, priorSent] = await Promise.all([
     lead ? fetchLeadAttempts(client, lead.id) : Promise.resolve([]),
     existingSentAttempt(client, idempotencyKey),
   ])
+  const { duplicateIdempotencyExists, ambiguousPriorDelivery } = priorSendState(priorSent, effectiveTestMode)
 
   const gate = evaluateSendGate({
     suggestion,
@@ -246,6 +262,7 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
     leadAttempts,
     credentialsConfigured,
     duplicateIdempotencyExists,
+    ambiguousPriorDelivery,
     testMode,
     testRecipients,
     now,
@@ -270,6 +287,11 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
   }
 
   const finalMessage = suggestion.message_final || suggestion.message_draft
+  // Email: the exact body/subject the provider receives (message + opt-out
+  // footer), also what the admin saw in the confirmation dialog and what the
+  // audit snapshot records. WhatsApp keeps the plain message.
+  const sentBody = channel === 'email' ? buildEmailBody(finalMessage) : finalMessage
+  const sentSubject = channel === 'email' ? emailSubjectFor(suggestion) : suggestion.subject_draft || null
   const recipientMasked = maskRecipient(gate.recipient, channel)
 
   let attemptRow
@@ -281,8 +303,8 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
         suggestion_id: suggestion.id,
         channel,
         purpose: 'provider_send',
-        message_snapshot: finalMessage,
-        subject_snapshot: suggestion.subject_draft || null,
+        message_snapshot: sentBody,
+        subject_snapshot: sentSubject,
         execution_mode: 'provider',
         status: 'prepared',
         idempotency_key: idempotencyKey,
@@ -320,8 +342,8 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
           fromName: channelCredentials.fromName,
           replyTo: channelCredentials.replyTo,
           recipient: gate.recipient,
-          subject: suggestion.subject_draft || 'پیام از هینزا پلیمر',
-          message: finalMessage,
+          subject: sentSubject,
+          message: sentBody,
           // Provider-level idempotency (Resend honors this header) as
           // defense-in-depth ON TOP OF the claim above - see
           // emailProvider.js's own comment. WhatsApp has no equivalent, so
