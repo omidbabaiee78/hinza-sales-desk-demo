@@ -4,7 +4,7 @@ import { outreachChannelLabel, outreachStatusLabel, shadowSuggestionStatusLabel 
 import MessagePreviewModal from '../../crm/MessagePreviewModal'
 import FirstEmailConfirmModal from './FirstEmailConfirmModal'
 import DoNotContactConfirmModal from './DoNotContactConfirmModal'
-import { emailSubjectFor } from '../../../outreach/sendGate'
+import { buildEmailPreview, emailSubjectFor } from '../../../outreach/sendGate'
 
 function isoDateNDaysFromNow(n) {
   const d = new Date()
@@ -77,6 +77,7 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers,
   const canSendTest = ['approved', 'edited'].includes(suggestion.status) && suggestion.send_status !== 'sent'
   const messageText = suggestion.message_final || suggestion.message_draft
   const recipientEmail = lead?.email?.trim() || ''
+  const emailPreview = suggestion.channel === 'email' ? buildEmailPreview({ suggestion, lead }) : null
   const isFirstEmailCandidate = suggestion.channel === 'email' && ['approved', 'edited'].includes(suggestion.status)
   const firstEmailBlocked = isFirstEmailCandidate ? firstEmailBlockReasons(suggestion, recipientEmail, messageText, firstEmailCheck) : []
   const canSendFirstEmail = isFirstEmailCandidate && firstEmailBlocked.length === 0
@@ -119,7 +120,30 @@ export default function ShadowSuggestionCard({ suggestion, onOpenLead, handlers,
           </ul>
         )}
 
-        {messageText && <div className="outreach-message-preview">{messageText}</div>}
+        {/* Email: the exact recipient/subject/body a real send would use
+            (opt-out footer included), visible at every status so it can be
+            reviewed before approving. Other channels show the plain text. */}
+        {emailPreview ? (
+          <div className="prospect-evidence-box">
+            <div className="info-row">
+              <span className="info-label">گیرنده</span>
+              <span className="info-value" dir="ltr">
+                {emailPreview.recipient || '—'}
+              </span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">موضوع</span>
+              <span className="info-value">{emailPreview.subject}</span>
+            </div>
+            {emailPreview.body && (
+              <div className="outreach-message-preview" style={{ whiteSpace: 'pre-wrap' }}>
+                {emailPreview.body}
+              </div>
+            )}
+          </div>
+        ) : (
+          messageText && <div className="outreach-message-preview">{messageText}</div>
+        )}
 
         <div className="automation-card-meta">
           {suggestion.suggested_send_at && <span>زمان پیشنهادی ارسال: {formatJalaliDateTime(suggestion.suggested_send_at)}</span>}
