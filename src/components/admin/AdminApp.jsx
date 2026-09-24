@@ -19,6 +19,7 @@ import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
 import EmailOutreachPage from './outreach/EmailOutreachPage'
+import ChannelOutreachPage from './outreach/ChannelOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 import AdminProspectingPage from './prospecting/AdminProspectingPage'
 import AdminMissionPage from './AdminMissionPage'
@@ -38,6 +39,7 @@ const GROUPS = [
     defaultKey: 'outreach',
     tabs: [
       { key: 'outreach', label: 'ایمیل‌ها' },
+      { key: 'channels', label: 'وضعیت کانال‌ها (ایمیل، واتساپ، بله)' },
       { key: 'replies', label: 'نتیجهٔ ارتباط' },
     ],
   },
@@ -60,6 +62,7 @@ const ALL_VALID_KEYS = new Set([
   'today',
   'automation',
   'outreach',
+  'channels',
   'replies',
   'prospecting',
   'registrationRequests',
@@ -212,6 +215,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
         />
       )}
       {activeKey === 'outreach' && <EmailOutreachPage onOpenLead={openLead} />}
+      {activeKey === 'channels' && <ChannelOutreachPage onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
       {activeKey === 'prospecting' && <AdminProspectingPage />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}

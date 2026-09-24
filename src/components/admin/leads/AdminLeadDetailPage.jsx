@@ -21,6 +21,7 @@ import LeadLostModal from './LeadLostModal'
 import LeadConvertModal from './LeadConvertModal'
 import LeadSamplesSection from './LeadSamplesSection'
 import LeadEmailStatus from './LeadEmailStatus'
+import LeadChannelStatus from './LeadChannelStatus'
 import '../../common/DataTable.css'
 import './Leads.css'
 
@@ -247,6 +248,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
         </section>
 
         <LeadEmailStatus leadId={lead.id} />
+        <LeadChannelStatus leadId={lead.id} />
 
         <LeadSamplesSection
           leadId={lead.id}

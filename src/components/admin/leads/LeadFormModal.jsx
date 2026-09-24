@@ -39,6 +39,7 @@ function initialFieldsFrom(lead) {
     assigned_to: lead?.assigned_to || '',
     preferred_channel: lead?.preferred_channel || '',
     do_not_contact: lead?.do_not_contact || false,
+    bale_chat_id: lead?.bale_chat_id || '',
   }
 }
 
@@ -93,6 +94,11 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
       assigned_to: fields.assigned_to || null,
       preferred_channel: fields.preferred_channel || null,
       do_not_contact: fields.do_not_contact,
+      // Only sent when set (or being cleared), so saving a lead never
+      // depends on the phase34 column existing.
+      ...(fields.bale_chat_id.trim() || lead?.bale_chat_id
+        ? { bale_chat_id: fields.bale_chat_id.trim() || null, bale_chat_id_source: fields.bale_chat_id.trim() ? 'manual' : null }
+        : {}),
       tags,
       next_follow_up_at: followUpIsoFromDate(followUpDate),
     }
@@ -187,6 +193,17 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
                 value={fields.website}
                 onChange={(e) => setField('website', e.target.value)}
               />
+            </label>
+            <label>
+              شناسه گفتگوی بله (chat id)
+              <input
+                type="text"
+                dir="ltr"
+                placeholder="فقط اگر واقعاً شناسه گفتگو را دارید"
+                value={fields.bale_chat_id}
+                onChange={(e) => setField('bale_chat_id', e.target.value)}
+              />
+              <span className="lead-form-hint">شماره موبایل شناسه گفتگوی بله نیست؛ ربات بله فقط به کسی که قبلاً با آن گفتگو را شروع کرده پیام می‌دهد.</span>
             </label>
             <label>
               استان

@@ -40,8 +40,8 @@ export function outreachChannelLabel(channel) {
 
 export const ATTEMPT_STATUS_LABELS = {
   prepared: 'آماده‌شده',
-  opened: 'بازشده',
-  copied: 'کپی‌شده',
+  opened: 'لینک باز شد (ارسال تأیید نشده)',
+  copied: 'متن کپی شد (ارسال تأیید نشده)',
   completed: 'انجام‌شده',
   failed: 'ناموفق',
   cancelled: 'لغوشده',
