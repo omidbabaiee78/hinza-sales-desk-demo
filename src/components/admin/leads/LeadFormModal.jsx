@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createLead, updateLead } from '../../../services/salesLeads'
 import { findLeadDuplicates } from '../../../utils/leadDuplicates'
+import { normalizeSourceForDb } from '../../../services/leadPayload'
 import {
   LEAD_PREFERRED_CHANNELS,
   LEAD_PRIORITIES,
@@ -30,7 +31,8 @@ function initialFieldsFrom(lead) {
     city: lead?.city || '',
     address: lead?.address || '',
     industry: lead?.industry || '',
-    source: lead?.source || '',
+    // sales_leads.source is NOT NULL - a new lead starts on 'other' (سایر).
+    source: lead?.source || 'other',
     priority: lead?.priority || 'medium',
     need_note: lead?.need_note || '',
     notes: lead?.notes || '',
@@ -84,7 +86,7 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
       city: fields.city.trim() || null,
       address: fields.address.trim() || null,
       industry: fields.industry.trim() || null,
-      source: fields.source || null,
+      source: normalizeSourceForDb(fields.source),
       priority: fields.priority,
       need_note: fields.need_note.trim() || null,
       notes: fields.notes.trim() || null,
@@ -221,7 +223,6 @@ export default function LeadFormModal({ lead, leads, companies, admins, onSaved,
             <label>
               منبع
               <select value={fields.source} onChange={(e) => setField('source', e.target.value)}>
-                <option value="">—</option>
                 {LEAD_SOURCES.map((s) => (
                   <option key={s} value={s}>
                     {leadSourceLabel(s)}

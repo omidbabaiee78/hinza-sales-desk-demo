@@ -81,6 +81,19 @@ export function buildEmailBody(message) {
   return `${(message || '').trim()}\n\n—\n${EMAIL_OPT_OUT_FOOTER}`
 }
 
+// The exact email a real send of this suggestion would produce - recipient,
+// subject and full body - from the same pieces sendPipeline.js uses, so the
+// admin can review it on the card at any status (pending included), before
+// approving anything. body is null when there is no message text yet.
+export function buildEmailPreview({ suggestion, lead }) {
+  const message = suggestion?.message_final || suggestion?.message_draft
+  return {
+    recipient: resolveRealRecipient(lead, 'email'),
+    subject: emailSubjectFor(suggestion),
+    body: hasUsableText(message) ? buildEmailBody(message) : null,
+  }
+}
+
 // The one idempotency-key formula, shared by sendPipeline.js (server) and
 // previewFirstEmailSend() below (admin UI) so both always agree.
 export function sendIdempotencyKey(suggestionId, testMode) {

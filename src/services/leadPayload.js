@@ -25,7 +25,9 @@ const SOURCE_ALIASES = {
 // source_row_number / lead_import_batches - sales_leads.source is a fixed
 // enum, so anything that isn't one of the allowed values (a raw free-text
 // column value, or nothing at all) becomes 'other', never written verbatim.
-function normalizeSourceForDb(raw) {
+// Exported for the manual lead form too - sales_leads.source is NOT NULL,
+// so a blank choice must become 'other' there exactly as it does here.
+export function normalizeSourceForDb(raw) {
   const text = String(raw ?? '').trim()
   if (!text) return 'other'
   const lower = text.toLowerCase()

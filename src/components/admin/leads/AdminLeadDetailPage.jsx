@@ -20,6 +20,7 @@ import LeadStatusChangeModal from './LeadStatusChangeModal'
 import LeadLostModal from './LeadLostModal'
 import LeadConvertModal from './LeadConvertModal'
 import LeadSamplesSection from './LeadSamplesSection'
+import LeadEmailStatus from './LeadEmailStatus'
 import '../../common/DataTable.css'
 import './Leads.css'
 
@@ -244,6 +245,8 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
             </div>
           )}
         </section>
+
+        <LeadEmailStatus leadId={lead.id} />
 
         <LeadSamplesSection
           leadId={lead.id}

@@ -76,7 +76,7 @@ function withinSameOrigin(baseUrl, candidateUrl) {
   }
 }
 
-async function fetchPageSafely(url, { timeoutMs, maxBytes }) {
+export async function fetchPageSafely(url, { timeoutMs, maxBytes }) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(new Error(`تایم‌اوت هنگام دریافت ${url}`)), timeoutMs)
   try {

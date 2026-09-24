@@ -12,6 +12,7 @@ import {
   AMBIGUOUS_PRIOR_DELIVERY_REASON,
   buildEmailBody,
   emailSubjectFor,
+  buildEmailPreview,
   EMAIL_OPT_OUT_FOOTER,
 } from '../src/outreach/sendGate.js'
 import { attemptSend, classifyOutcome } from '../src/outreach/sendPipeline.js'
@@ -1688,6 +1689,24 @@ await check('classifySendAttempts: separates test, real, uncertain, failed/block
     ambiguous: 1,
     realKeyAmbiguous: 0,
   })
+})
+
+await check('buildEmailPreview: a PENDING email suggestion shows the exact recipient, subject and full body (opt-out footer included)', () => {
+  const suggestion = { id: 'sugg-p', channel: 'email', status: 'pending', message_draft: 'سلام وقت بخیر،', message_final: null, subject_draft: 'معرفی هینزا' }
+  const preview = buildEmailPreview({ suggestion, lead: baseLead({ email: '  info@aryacompany.ir ' }) })
+  assert.equal(preview.recipient, 'info@aryacompany.ir')
+  assert.equal(preview.subject, 'معرفی هینزا')
+  assert.equal(preview.body, buildEmailBody('سلام وقت بخیر،'))
+  assert.ok(preview.body.endsWith(EMAIL_OPT_OUT_FOOTER))
+})
+
+await check('buildEmailPreview: prefers message_final, falls back to the default subject, and never invents a recipient or body', () => {
+  const edited = buildEmailPreview({ suggestion: { status: 'edited', message_draft: 'پیش‌نویس', message_final: 'متن نهایی', subject_draft: null }, lead: baseLead() })
+  assert.equal(edited.body, buildEmailBody('متن نهایی'))
+  assert.equal(edited.subject, emailSubjectFor({ subject_draft: null }))
+  const empty = buildEmailPreview({ suggestion: { message_draft: '  ', message_final: null }, lead: baseLead({ email: null }) })
+  assert.equal(empty.recipient, null)
+  assert.equal(empty.body, null)
 })
 
 console.log(`\n${passed} check(s) passed.`)

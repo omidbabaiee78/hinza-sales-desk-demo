@@ -248,3 +248,27 @@ export async function sendEmail({ apiKey, fromAddress, fromName, replyTo, recipi
     clearTimeout(timeoutHandle)
   }
 }
+
+// Delivery status of an already-accepted email (Resend GET /emails/{id} -
+// `last_event`: delivered, bounced, complained, delivery_delayed, sent,
+// opened, clicked, ...). Read-only; never sends. Returns
+// { ok, status, error } - status is the raw last_event string.
+export async function fetchEmailDeliveryStatus({ apiKey, providerMessageId, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  if (!apiKey || !isValidMessageId(providerMessageId)) return { ok: false, status: null, error: 'missing_key_or_id' }
+  const controller = new AbortController()
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`https://api.resend.com/emails/${encodeURIComponent(providerMessageId)}`, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    })
+    if (!response.ok) return { ok: false, status: null, error: `HTTP ${response.status}` }
+    const body = await response.json().catch(() => null)
+    return typeof body?.last_event === 'string' ? { ok: true, status: body.last_event, error: null } : { ok: false, status: null, error: 'no_last_event' }
+  } catch (err) {
+    return { ok: false, status: null, error: err?.name === 'AbortError' ? 'timeout' : 'network_error' }
+  } finally {
+    clearTimeout(timeoutHandle)
+  }
+}

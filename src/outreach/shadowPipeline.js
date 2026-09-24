@@ -217,65 +217,7 @@ export async function runShadowOutreachCycle(client, { runType = 'manual', creat
         if (evaluation.outreachStatus !== 'eligible') continue
         if (toInsert.length >= maxSuggestions) continue
 
-        let productFitProducts = []
-        // Phase 25 quality fix - customer-facing industry labels are
-        // derived ONLY from real matched evidence (industry_keyword items -
-        // an actual keyword found in the candidate's own business_
-        // description/name), via the exact same TARGET_INDUSTRIES taxonomy
-        // qualification/scoring already uses. NEVER from candidate.
-        // industry_guess or lead.industry directly - those are raw adapter/
-        // source taxonomy (e.g. a literal OSM tag value like "works") and
-        // must never reach customer-facing text (see
-        // shadowMessageComposer.js's file header). The raw value is still
-        // kept below, in evidence_snapshot only, for internal diagnostics.
-        let industryLabels = []
-        if (candidate) {
-          // Recomputed FRESH from the candidate's own stored fields, the
-          // same way runComprehensiveAudit()/promoteEligibleCandidates()
-          // already do - NOT read back from the persisted prospect_evidence
-          // rows, which drop each item's `meta` (no such column exists;
-          // matchedIndustryKeys() needs meta.industryKey to identify WHICH
-          // target industry matched, so a DB round-trip here would silently
-          // return zero industry labels even when real evidence exists).
-          const evidence = extractEvidence(candidate)
-          productFitProducts = suggestProductFit(evidence).products
-          industryLabels = matchedIndustryKeys(evidence)
-            .map((key) => TARGET_INDUSTRIES.find((i) => i.key === key)?.label)
-            .filter(Boolean)
-        }
-
-        const { message, evidenceUsed } = composeShadowOutreachMessage({ lead, industryLabels, productFitProducts })
-        const subject = evaluation.channel === 'email' ? composeShadowOutreachSubject(lead) : null
-
-        toInsert.push({
-          lead_id: lead.id,
-          candidate_id: candidate?.id || null,
-          run_id: runRow.id,
-          dedupe_key: dedupeKeyFor(lead.id),
-          outreach_status: evaluation.outreachStatus,
-          reasons: evaluation.reasons,
-          channel: evaluation.channel,
-          fallback_channel: evaluation.fallbackChannel,
-          priority: evaluation.priority,
-          message_draft: message,
-          subject_draft: subject,
-          evidence_used: evidenceUsed,
-          evidence_snapshot: {
-            overallScore: candidate?.overall_score ?? null,
-            confidence: candidate?.confidence ?? null,
-            // Raw, UNSANITIZED source value - diagnostics/audit only, never
-            // shown to a customer (see the header comment above).
-            rawIndustryGuess: candidate?.industry_guess ?? null,
-            industryLabelsUsed: industryLabels,
-            productFitProducts,
-            sourceUrl: candidate?.source_url ?? null,
-          },
-          within_contact_window: evaluation.withinContactWindow,
-          suggested_send_at: evaluation.suggestedSendAt || null,
-          next_available_at: evaluation.nextAvailableAt || null,
-          status: 'pending',
-          generated_at: now.toISOString(),
-        })
+        toInsert.push(buildSuggestionRow({ lead, candidate, evaluation, runId: runRow.id, now }))
 
         if (examples.length < 5) {
           examples.push({ leadId: lead.id, companyName: lead.company_name, channel: evaluation.channel, priority: evaluation.priority, reason: evaluation.reasons?.[0] || null })
@@ -335,4 +277,67 @@ export async function runShadowOutreachCycle(client, { runType = 'manual', creat
     .single()
   if (finishError) throw finishError
   return finishedRun
+}
+
+// One persisted suggestion row - the same shape for a scheduled/manual
+// shadow run and for the single-lead admin draft below.
+function buildSuggestionRow({ lead, candidate, evaluation, runId, now }) {
+  let productFitProducts = []
+  // Phase 25 quality fix - customer-facing industry labels are derived ONLY
+  // from real matched evidence (industry_keyword items - an actual keyword
+  // found in the candidate's own business_description/name), via the exact
+  // same TARGET_INDUSTRIES taxonomy qualification/scoring already uses.
+  // NEVER from candidate.industry_guess or lead.industry directly - those
+  // are raw adapter/source taxonomy (e.g. a literal OSM tag value like
+  // "works") and must never reach customer-facing text (see
+  // shadowMessageComposer.js's file header). The raw value is still kept
+  // below, in evidence_snapshot only, for internal diagnostics.
+  let industryLabels = []
+  if (candidate) {
+    // Recomputed FRESH from the candidate's own stored fields, the same way
+    // runComprehensiveAudit()/promoteEligibleCandidates() already do - NOT
+    // read back from the persisted prospect_evidence rows, which drop each
+    // item's `meta` (no such column exists; matchedIndustryKeys() needs
+    // meta.industryKey to identify WHICH target industry matched, so a DB
+    // round-trip here would silently return zero industry labels even when
+    // real evidence exists).
+    const evidence = extractEvidence(candidate)
+    productFitProducts = suggestProductFit(evidence).products
+    industryLabels = matchedIndustryKeys(evidence)
+      .map((key) => TARGET_INDUSTRIES.find((i) => i.key === key)?.label)
+      .filter(Boolean)
+  }
+
+  const { message, evidenceUsed } = composeShadowOutreachMessage({ lead, industryLabels, productFitProducts })
+  const subject = evaluation.channel === 'email' ? composeShadowOutreachSubject(lead) : null
+
+  return {
+    lead_id: lead.id,
+    candidate_id: candidate?.id || null,
+    run_id: runId,
+    dedupe_key: dedupeKeyFor(lead.id),
+    outreach_status: evaluation.outreachStatus,
+    reasons: evaluation.reasons,
+    channel: evaluation.channel,
+    fallback_channel: evaluation.fallbackChannel,
+    priority: evaluation.priority,
+    message_draft: message,
+    subject_draft: subject,
+    evidence_used: evidenceUsed,
+    evidence_snapshot: {
+      overallScore: candidate?.overall_score ?? null,
+      confidence: candidate?.confidence ?? null,
+      // Raw, UNSANITIZED source value - diagnostics/audit only, never shown
+      // to a customer (see the comment above).
+      rawIndustryGuess: candidate?.industry_guess ?? null,
+      industryLabelsUsed: industryLabels,
+      productFitProducts,
+      sourceUrl: candidate?.source_url ?? null,
+    },
+    within_contact_window: evaluation.withinContactWindow,
+    suggested_send_at: evaluation.suggestedSendAt || null,
+    next_available_at: evaluation.nextAvailableAt || null,
+    status: 'pending',
+    generated_at: now.toISOString(),
+  }
 }

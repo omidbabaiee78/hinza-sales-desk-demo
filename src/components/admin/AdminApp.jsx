@@ -18,7 +18,7 @@ import AdminLeadsPage from './leads/AdminLeadsPage'
 import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
 import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
-import AdminOutreachPage from './outreach/AdminOutreachPage'
+import EmailOutreachPage from './outreach/EmailOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 import AdminProspectingPage from './prospecting/AdminProspectingPage'
 import './today/Today.css'
@@ -51,7 +51,7 @@ const GROUPS = [
     defaultKey: 'leads',
     tabs: [
       { key: 'leads', label: 'سرنخ‌ها' },
-      { key: 'outreach', label: 'پیشنهاد پیام (آزمایشی)', advanced: true },
+      { key: 'outreach', label: 'ارسال ایمیل' },
       { key: 'prospecting', label: 'کشف مشتری', advanced: true },
       { key: 'replies', label: 'پاسخ‌ها', advanced: true },
     ],
@@ -257,7 +257,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
           onOpenInvoice={openInvoice}
         />
       )}
-      {activeKey === 'outreach' && <AdminOutreachPage onOpenLead={openLead} />}
+      {activeKey === 'outreach' && <EmailOutreachPage onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
       {activeKey === 'prospecting' && <AdminProspectingPage />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
