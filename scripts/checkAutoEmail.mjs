@@ -157,16 +157,18 @@ function makeClient({ config = settings(), leads = [], suggestions = [], attempt
 
   // Mirrors public.claim_email_outreach_recipient(): the whole check-and-
   // insert runs inside one tick, i.e. atomically - like the advisory lock.
+  // Uses the SAME pinned clock as the runner (noon) - with the real clock
+  // the daily-cap check failed on any day other than 2026-09-24.
   async function rpc(name, args) {
     await tick()
     if (name !== 'claim_email_outreach_recipient') return { data: null, error: { message: `unknown rpc ${name}` } }
     const email = args.p_email.trim().toLowerCase()
     if (tables.email_outreach_recipients.some((r) => r.normalized_email === email)) return { data: 'duplicate', error: null }
     const cap = tables.automation_settings[0].auto_email_daily_cap ?? 20
-    const today = tehranDateKey(new Date())
+    const today = tehranDateKey(noon)
     const used = tables.email_outreach_recipients.filter((r) => ['claimed', 'sent', 'uncertain'].includes(r.status) && r.claimed_at && tehranDateKey(new Date(r.claimed_at)) === today).length
     if (used >= cap) return { data: 'cap_reached', error: null }
-    tables.email_outreach_recipients.push({ normalized_email: email, lead_id: args.p_lead_id, suggestion_id: args.p_suggestion_id, status: 'claimed', claimed_at: new Date().toISOString() })
+    tables.email_outreach_recipients.push({ normalized_email: email, lead_id: args.p_lead_id, suggestion_id: args.p_suggestion_id, status: 'claimed', claimed_at: noon.toISOString() })
     return { data: 'claimed', error: null }
   }
 
@@ -509,7 +511,7 @@ await check('an email already sent today (e.g. info@aryacompany.ir) counts towar
   const client = makeClient({
     config: settings({ auto_email_max_per_run: 3, auto_email_daily_cap: 2 }),
     leads: [lead(), lead(), lead()],
-    recipients: [{ normalized_email: 'info@aryacompany.ir', lead_id: 'arya', status: 'sent', claimed_at: new Date().toISOString() }],
+    recipients: [{ normalized_email: 'info@aryacompany.ir', lead_id: 'arya', status: 'sent', claimed_at: noon.toISOString() }],
   })
   await withResend({ mode: 'rejectFirst' }, async (sent) => {
     const report = await run(client)
@@ -583,6 +585,9 @@ await check('lookup: related-name addresses published on the company site are ac
   assert.equal(pickCompanyEmail(['info@denizgroup.co'], 'denizshimi.com'), 'info@denizgroup.co')
   assert.equal(pickCompanyEmail(['charmara.golshad@gmail.com'], 'igolshad.ir'), 'charmara.golshad@gmail.com')
   assert.equal(pickCompanyEmail(['hello@webdesign-studio.ir'], 'gharn.ir'), null)
+  // Sharing only a generic industry word is not a relation (pakchemical.com vs pishrochem.com).
+  assert.equal(pickCompanyEmail(['sales@pishrochem.com'], 'pakchemical.com'), null)
+  assert.equal(pickCompanyEmail(['info@polyplast.ir'], 'plasticpoly.com'), null)
   assert.equal(pickCompanyEmail(['www.saniplastco@gmail.com'], 'saniplastmehr.com'), null)
   assert.equal(pickCompanyEmail(['info@othercorp.ir', 'sales@acme.ir', 'info@acme.ir'], 'acme.ir'), 'sales@acme.ir')
 })

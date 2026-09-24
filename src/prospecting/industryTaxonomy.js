@@ -137,6 +137,46 @@ export const TARGET_INDUSTRIES = [
     keywords: ['کامپاند کابل', 'روکش کابل', 'عایق کابل'],
     productFit: ['افزودنی پلیمری'],
   },
+  // Phase 36 - industries the discovery queries already search for
+  // (phase33) but that had no entry here, so real polymer users - cable
+  // makers (PVC/PE insulation), artificial-grass and flooring makers -
+  // were read as "no polymer evidence" and never registered.
+  {
+    key: 'wire_cable',
+    label: 'سیم و کابل',
+    keywords: ['سیم و کابل', 'کابل برق', 'کابل مسی', 'کابل افشان', 'تولید کابل', 'cable'],
+    productFit: ['افزودنی پلیمری', 'مستربچ رنگی'],
+  },
+  {
+    key: 'artificial_grass',
+    label: 'چمن مصنوعی',
+    keywords: ['چمن مصنوعی', 'artificial grass'],
+    productFit: ['مستربچ رنگی', 'افزودنی ضد UV'],
+  },
+  {
+    key: 'flooring',
+    label: 'کفپوش پلیمری',
+    keywords: ['کفپوش پی وی سی', 'کفپوش pvc', 'کف پوش پی وی سی', 'کفپوش وینیل', 'کفپوش لمینت پلیمری'],
+    productFit: ['مستربچ رنگی', 'افزودنی پلیمری'],
+  },
+  {
+    key: 'fibers_nonwoven',
+    label: 'الیاف و منسوج بی‌بافت',
+    keywords: ['الیاف پلی پروپیلن', 'منسوج بی بافت', 'اسپان باند', 'نبافته'],
+    productFit: ['مستربچ رنگی', 'مستربچ سفید'],
+  },
+  {
+    key: 'woven_sacks',
+    label: 'گونی و کیسه بافته',
+    keywords: ['گونی پلاستیکی', 'کیسه بافته', 'گونی پلی پروپیلن'],
+    productFit: ['مستربچ سفید', 'افزودنی ضد UV'],
+  },
+  {
+    key: 'geomembrane_foam',
+    label: 'ژئوممبران و فوم',
+    keywords: ['ژئوممبران', 'فوم پلی اتیلن', 'نایلون حبابدار'],
+    productFit: ['مستربچ مشکی', 'افزودنی پلیمری'],
+  },
 ]
 
 // A fallback signal for terse records (a directory listing's NAME is often

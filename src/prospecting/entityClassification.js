@@ -116,7 +116,9 @@ const DIRECTORY_MARKER_WORDS = ['فهرست', 'دایرکتوری', 'کاتال�
 // companies; "معرفی کارخانه" (singular) is exactly as likely to be a
 // company introducing itself.
 const AMBIGUOUS_INTRO_WORDS = ['معرفی']
-const PLURAL_ENTITY_WORDS = ['شرکت ها', 'شرکت های', 'شرکتها', 'تولیدکنندگان', 'کارخانه ها', 'کارخانجات', 'کارگاه ها', 'کارگاه های']
+// 'تولید کنندگان' (with a space) is how many listicle titles write it -
+// «لیست تولید کنندگان ورق پلی کربنات» was read as a company site.
+const PLURAL_ENTITY_WORDS = ['شرکت ها', 'شرکت های', 'شرکتها', 'تولیدکنندگان', 'تولید کنندگان', 'کارخانه ها', 'کارخانجات', 'کارگاه ها', 'کارگاه های']
 // 23D-FINAL.1, section 4 (my.abyartajhiz.ir / hadiplastic.ir false
 // positives): "کارگاه" (workshop) was missing entirely - hadiplastic.ir's
 // "معرفی معروف‌ترین کارگاه‌های تزریق پلاستیک در ایران" never matched any
@@ -127,6 +129,7 @@ const PLURAL_ENTITY_WORDS = ['شرکت ها', 'شرکت های', 'شرکتها',
 const ENTITY_WORDS = [
   'تولیدکننده',
   'تولیدکنندگان',
+  'تولید کنندگان',
   'شرکت ها',
   'شرکت های',
   'شرکتها',

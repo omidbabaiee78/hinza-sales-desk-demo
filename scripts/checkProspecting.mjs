@@ -29,6 +29,8 @@ import {
   searchOfficialSitesForLeads,
 } from '../src/prospecting/discoveryPipeline.js'
 import { findLeadEmailViaSearch } from '../src/prospecting/leadSiteSearch.js'
+import { tidyCompanyName } from '../src/prospecting/siteVerification.js'
+import { leadsDueForContactEnrichment } from '../src/prospecting/leadContactEnrichment.js'
 import { osmOverpassAdapter, __testing as osmOverpassTesting } from '../src/prospecting/sourceAdapters/osmOverpass.js'
 import { serperSearchAdapter, DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, buildQueryPlan, nextRotationSlice } from '../src/prospecting/sourceAdapters/serperSearch.js'
 
@@ -3192,6 +3194,8 @@ function pendingCandidate(client, overrides = {}) {
     business_description: 'فیلم پلی اتیلن سه لایه',
     email: null,
     first_seen_at: '2026-09-24T05:00:00Z',
+    // Shaped like a real search-result candidate (serperSearch.js normalize).
+    raw_data: { link: overrides.website || 'https://sample-plast.ir/film/', title: overrides.raw_name || 'فیلم پلی اتیلن' },
     ...overrides,
   }
   client.tables.prospect_candidates.push(row)
@@ -3527,6 +3531,54 @@ await check('Phase 35: a candidate whose site mobile is already on a lead is a d
   assert.equal(client.tables.sales_leads.length, 1)
   assert.equal(client.tables.prospect_candidates[0].status, 'duplicate')
   assert.equal(client.tables.prospect_candidates[0].matched_lead_id, 'lead-by-hand')
+})
+
+await check('Phase 36: a real company that USES polymer products (medium buyer fit, no production wording) is registered', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { canonical_name: 'kabl', raw_name: 'کابل', business_description: 'کابل برق', website: 'https://kabl-sample.ir/', domain: 'kabl-sample.ir' })
+  const { fetchPage } = fakeSite({
+    'https://kabl-sample.ir/': sitePage({ title: 'سیم و کابل البرز نمونه', siteName: 'سیم و کابل البرز نمونه', description: 'کابل برق و کابل مسی در سایزهای مختلف', body: 'info@kabl-sample.ir' }),
+  })
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(summary.promoted, 1)
+  assert.equal(client.tables.sales_leads[0].company_name, 'سیم و کابل البرز نمونه')
+})
+
+await check('Phase 36: a company is registered even with NO contact details found - enrichment can look again later', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({
+    'https://sample-plast.ir/': sitePage({ title: 'صنایع پلاستیک نمونه', siteName: 'صنایع پلاستیک نمونه', description: 'شرکت صنایع پلاستیک نمونه تولید کننده فیلم پلی اتیلن با کارخانه', body: 'فرم تماس' }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  const lead = client.tables.sales_leads[0]
+  assert.ok(lead, 'registered as a lead')
+  assert.equal(lead.email, null)
+  assert.equal(lead.mobile ?? null, null)
+  assert.equal(lead.website, 'https://sample-plast.ir/film/')
+  assert.ok(leadsDueForContactEnrichment([{ ...lead, contact_lookup_at: null }]).length === 1, 'it stays eligible for contact enrichment')
+})
+
+await check('Phase 36: still never registered - a masterbatch competitor, a listicle-named page, a site with no polymer signal', async () => {
+  for (const page of [
+    sitePage({ title: 'مستربچ نمونه', siteName: 'مستربچ نمونه', description: 'تولید کننده مستربچ رنگی و مستربچ سفید و رنگدانه', body: 'x' }),
+    sitePage({ title: 'لیست تولید کنندگان ورق پلی کربنات', siteName: 'لیست تولید کنندگان ورق پلی کربنات', description: 'ورق پلی کربنات', body: 'x' }),
+    sitePage({ title: 'شرکت حسابداری نمونه', siteName: 'شرکت حسابداری نمونه', description: 'خدمات حسابداری و مالیاتی', body: 'x' }),
+  ]) {
+    const client = makeFakeClient()
+    pendingCandidate(client, { raw_name: 'نمونه', canonical_name: 'نمونه', business_description: '' })
+    const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': page })
+    await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+    assert.equal(client.tables.sales_leads.length, 0)
+  }
+})
+
+await check('Phase 36: names are cleaned of greetings, sentences and activity phrases', () => {
+  assert.equal(tidyCompanyName('Welcome To Tak Cable Works Co.'), 'Tak Cable Works Co.')
+  assert.equal(tidyCompanyName('شرکت گرانول رباط. با بیش از پنجاه سال تجربه در'), 'شرکت گرانول رباط')
+  assert.equal(isPlausibleOrganizationName('عرضه انواع کیسه و گونی'), false)
+  assert.equal(isPlausibleOrganizationName('لیست تولید کنندگان ورق'), false)
+  assert.equal(isPlausibleOrganizationName('آسیا چمن'), true)
 })
 
 console.log(`\n${passed} check(s) passed.`)
