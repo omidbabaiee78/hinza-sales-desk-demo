@@ -3483,4 +3483,14 @@ await check('Phase 33: a server run discovers, then reads the new candidate\'s s
   assert.equal(run.summary.emailsFoundTodayAfter, 1)
 })
 
+await check('Phase 33: a theme placeholder name (Latin, unrelated to the domain) is skipped for the site title', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { website: 'https://rashaplast.ir/x/', domain: 'rashaplast.ir' })
+  const { fetchPage } = fakeSite({
+    'https://rashaplast.ir/': sitePage({ title: 'خانه - راشا پلاست', siteName: 'recook', description: 'شرکت راشا پلاست تولید کننده کیسه گونی پلاستیکی با کارخانه', body: 'info@rashaplast.ir' }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads[0]?.company_name, 'راشا پلاست')
+})
+
 console.log(`\n${passed} check(s) passed.`)
