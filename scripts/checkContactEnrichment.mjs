@@ -83,6 +83,12 @@ await check('phones: prices, codes, unlabelled landlines, fax numbers and web-de
   assert.deepEqual(p.landlines, [])
 })
 
+await check('phones: a theme placeholder number on the page (09123456789, repeated digits) is never taken', () => {
+  const p = extractPhones('شماره تماس 09123456789 - 0912345 | تلفن: 021-88888888 | <a href="tel:09121162603">تماس</a>')
+  assert.deepEqual(p.mobiles, ['09121162603'])
+  assert.deepEqual(p.landlines, [])
+})
+
 await check('lookup: collectPhones keeps crawling past the email to the contact page; the default email-only lookup is unchanged', async () => {
   const pages = {
     'https://acme.ir/': '<title>آکمه</title> info@acme.ir <a href="/contact-us/">تماس با ما</a>',

@@ -301,14 +301,25 @@ function localDigits(raw) {
   return digits
 }
 
+// A theme's sample number (bazco.ir shows «شماره تماس 09123456789») is
+// on the page but is nobody's number: a run of consecutive digits, or the
+// last 7 digits all the same.
+export function isPlaceholderNumber(local) {
+  const digits = String(local || '').replace(/\D/g, '')
+  const tail = digits.slice(-8)
+  const ascending = '0123456789'.includes(tail)
+  const descending = '9876543210'.includes(tail)
+  return ascending || descending || /(\d)\1{6}$/.test(digits)
+}
+
 function mobileKey(raw) {
   const local = localDigits(raw)
-  return /^09\d{9}$/.test(local) ? local : null
+  return /^09\d{9}$/.test(local) && !isPlaceholderNumber(local) ? local : null
 }
 
 function landlineKey(raw) {
   const local = localDigits(raw)
-  return /^0[1-8]\d{9}$/.test(local) ? local : null
+  return /^0[1-8]\d{9}$/.test(local) && !isPlaceholderNumber(local) ? local : null
 }
 
 export function visibleText(html) {
