@@ -3493,4 +3493,39 @@ await check('Phase 33: a theme placeholder name (Latin, unrelated to the domain)
   assert.equal(client.tables.sales_leads[0]?.company_name, 'راشا پلاست')
 })
 
+await check('Phase 35: site step also takes the numbers the candidate\'s site publishes, with their source page', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const home = sitePage({
+    title: 'صنایع پلاستیک نمونه | تولید کننده فیلم پلی اتیلن',
+    siteName: 'صنایع پلاستیک نمونه',
+    description: 'شرکت صنایع پلاستیک نمونه تولید کننده فیلم پلی اتیلن و نایلون کشاورزی با کارخانه در شهرک صنعتی',
+    body: '<footer>info@sample-plast.ir <a href="tel:09121234567">تماس</a> تلفن: 021-88001122</footer>',
+  })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': home })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  const lead = client.tables.sales_leads[0]
+  assert.equal(lead.mobile, '09121234567')
+  assert.equal(lead.phone, '02188001122')
+  assert.equal(lead.phone_source_url, 'https://sample-plast.ir/')
+  assert.equal(lead.contact_lookup_status, 'found')
+})
+
+await check('Phase 35: a candidate whose site mobile is already on a lead is a duplicate, not a second lead', async () => {
+  const client = makeFakeClient()
+  client.tables.sales_leads.push({ id: 'lead-by-hand', company_name: 'ثبت دستی', email: null, website: null, mobile: '0912 123 4567', phone: null })
+  pendingCandidate(client)
+  const home = sitePage({
+    title: 'صنایع پلاستیک نمونه',
+    siteName: 'صنایع پلاستیک نمونه',
+    description: 'شرکت صنایع پلاستیک نمونه تولید کننده فیلم پلی اتیلن با کارخانه',
+    body: '<a href="tel:+989121234567">تماس</a>',
+  })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': home })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 1)
+  assert.equal(client.tables.prospect_candidates[0].status, 'duplicate')
+  assert.equal(client.tables.prospect_candidates[0].matched_lead_id, 'lead-by-hand')
+})
+
 console.log(`\n${passed} check(s) passed.`)

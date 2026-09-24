@@ -13,7 +13,8 @@
     "check:replies": "node scripts/checkReplyIntelligence.mjs",
     "check:prospecting": "node scripts/checkProspecting.mjs",
     "check:auto-email": "node scripts/checkAutoEmail.mjs",
-    "check:channels": "node scripts/checkChannelOutreach.mjs"
+    "check:channels": "node scripts/checkChannelOutreach.mjs",
+    "check:contacts": "node scripts/checkContactEnrichment.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",

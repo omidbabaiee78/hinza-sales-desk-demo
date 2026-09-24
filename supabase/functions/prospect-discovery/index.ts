@@ -42,7 +42,9 @@
 // admin-JWT/cron-secret authentication above, which is unchanged.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { runDiscovery, testSource, dryRunQualification, runComprehensiveAudit, promoteEligibleCandidates } from '../../../src/prospecting/discoveryPipeline.js'
+import { runDiscovery, testSource, dryRunQualification, runComprehensiveAudit, promoteEligibleCandidates, searchOfficialSitesForLeads } from '../../../src/prospecting/discoveryPipeline.js'
+import { enrichLeadContacts } from '../../../src/prospecting/leadContactEnrichment.js'
+import { searchWeb } from '../../../src/prospecting/sourceAdapters/serperSearch.js'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -184,11 +186,17 @@ Deno.serve(async (req) => {
   let mode: string = 'run'
   let manualTest = false
   let dryRun = false
+  let maxLeads = 0
+  let maxSearches = 0
   try {
     const body = await req.json().catch(() => ({}))
     sourceId = body?.sourceId || null
     manualTest = body?.manualTest === true
     dryRun = body?.dryRun === true
+    // enrich_contacts: hard caps - at most 40 lead websites and 8 paid
+    // searches per call, whatever the caller asks for.
+    maxLeads = Math.min(Math.max(Number(body?.maxLeads) || 0, 0), 40)
+    maxSearches = Math.min(Math.max(Number(body?.maxSearches) || 0, 0), 8)
     mode =
       body?.mode === 'health'
         ? 'health'
@@ -198,7 +206,9 @@ Deno.serve(async (req) => {
             ? 'comprehensive_audit'
             : body?.mode === 'promote_eligible_candidates'
               ? 'promote_eligible_candidates'
-              : 'run'
+              : body?.mode === 'enrich_contacts'
+                ? 'enrich_contacts'
+                : 'run'
   } catch {
     sourceId = null
   }
@@ -249,6 +259,18 @@ Deno.serve(async (req) => {
         }),
       )
       return jsonResponse({ ok: true, mode: 'comprehensive_audit', ...result, duration_ms: durationMs })
+    }
+
+    // Contact enrichment of registered leads only - reads leads' own
+    // websites (free) and runs at most maxSearches paid official-site
+    // searches. No discovery searches, no candidate promotion, no messages.
+    if (mode === 'enrich_contacts') {
+      const deadline = startedAt + 110000
+      const leadContacts = await enrichLeadContacts(client, { deadline: startedAt + 85000, maxLeads })
+      const leadSiteSearch = await searchOfficialSitesForLeads(client, { deadline, maxSearches, search: (query: string) => searchWeb(query) })
+      const durationMs = Date.now() - startedAt
+      console.log('prospect-discovery: enrich_contacts finished', JSON.stringify({ leadContacts, leadSiteSearch }))
+      return jsonResponse({ ok: true, mode: 'enrich_contacts', lead_contacts: leadContacts, lead_site_search: leadSiteSearch, duration_ms: durationMs })
     }
 
     if (mode === 'promote_eligible_candidates') {
@@ -324,6 +346,7 @@ Deno.serve(async (req) => {
       items_not_processed: run.summary?.itemsNotProcessed ?? 0,
       site_verification: run.summary?.siteVerification ?? null,
       lead_site_search: run.summary?.leadSiteSearch ?? null,
+      lead_contacts: run.summary?.leadContacts ?? null,
       emails_found_today_before: run.summary?.emailsFoundTodayBefore ?? null,
       emails_found_today_after: run.summary?.emailsFoundTodayAfter ?? null,
       daily_email_target: run.summary?.dailyEmailTarget ?? null,
