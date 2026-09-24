@@ -5,7 +5,7 @@ import { scoreCandidate } from './scoringEngine.js'
 import { qualifyCandidate } from './qualification.js'
 import { isPromotableIdentity, isPlausibleOrganizationName, resolveVerifiedIdentity, IDENTITY_SOURCES } from './identityResolution.js'
 import { normalizedNameKey } from './normalization.js'
-import { lookupCompanyEmail, LOOKUP_LIMITS } from '../outreach/emailDiscovery.js'
+import { lookupCompanyEmail, LOOKUP_LIMITS, visibleText } from '../outreach/emailDiscovery.js'
 
 // ---------------------------------------------------------------------------
 // Reading a discovered company's OWN website before deciding on it.
@@ -68,6 +68,29 @@ export function isForeignLatinName(name, domain) {
   return !sharesPart(name, label) && !sharesPart(label, name)
 }
 
+const IRAN_SIGNAL = /[؀-ۿ]|\biran\b/i
+
+// What the company's own homepage says about itself - never the search
+// snippet, which can describe a company a portal merely lists:
+//   - page type from its title/description (not an article, directory,
+//     marketplace, social or video page),
+//   - polymer evidence somewhere in its title, description or visible
+//     homepage text (a portal's homepage is about news/ads, not polymer
+//     products; a manufacturer's names its products),
+//   - an Iranian signal: .ir domain, Persian text, or a mention of Iran.
+export function siteOwnSignals({ candidate, signals, homepageText = '' }) {
+  const title = [signals.jsonLdOrganizationName, signals.ogSiteName, signals.titleText].filter(Boolean).join(' ')
+  const head = { ...candidate, raw_name: title, canonical_name: signals.ogSiteName || signals.titleText || '', business_description: signals.description || '', raw_data: null, source_url: candidate.website }
+  const pageEvidence = extractEvidence(head)
+  const bodyEvidence = extractEvidence({ ...head, business_description: [signals.description, homepageText].filter(Boolean).join(' ') })
+  const text = [title, signals.description, homepageText].filter(Boolean).join(' ')
+  const reasons = []
+  if (isNonCompanyEntityType(matchedEntityType(pageEvidence))) reasons.push('site_not_company')
+  if (!hasIndustryEvidence(pageEvidence) && !hasIndustryEvidence(bodyEvidence)) reasons.push('no_polymer_signal_on_site')
+  if (!/\.ir$/i.test(candidate.domain || '') && !IRAN_SIGNAL.test(text)) reasons.push('not_iranian')
+  return { ok: reasons.length === 0, reasons }
+}
+
 function hasIndustryEvidence(evidence) {
   return evidence.some(
     (e) => e.evidenceType === 'industry_keyword' || e.evidenceType === 'generic_manufacturing_signal' || e.evidenceType === 'structured_industrial_signal',
@@ -79,8 +102,20 @@ function hasIndustryEvidence(evidence) {
 // title (isPlausibleOrganizationName) and never a bare domain label.
 const NO_NAME_SOURCES = new Set([IDENTITY_SOURCES.DOMAIN_FALLBACK, IDENTITY_SOURCES.NOT_APPLICABLE, IDENTITY_SOURCES.UNRESOLVED])
 
+// The name must come from the site's OWN markers (isPromotableIdentity:
+// JSON-LD, og:site_name, homepage title, about/contact page) - a name
+// taken from a search snippet can belong to a company a portal merely
+// lists (shahr24.com / parscenter.com listing «حباب باران»), and the
+// site's contacts would then be attached to the wrong company.
 export function hasUsableCompanyName(identity) {
-  return Boolean(identity?.resolvedName) && identity.status !== 'unresolved' && !NO_NAME_SOURCES.has(identity.source) && isPlausibleOrganizationName(identity.resolvedName)
+  const name = identity?.resolvedName
+  return (
+    Boolean(name) &&
+    !NO_NAME_SOURCES.has(identity.source) &&
+    isPromotableIdentity(identity) &&
+    isPlausibleOrganizationName(name) &&
+    !/\.(com|ir|net|org|co|info|biz)\b/i.test(name)
+  )
 }
 
 // Registration rule: a REASONABLE signal that this is a real company that
@@ -180,6 +215,10 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
 
   const scores = scoreCandidate(enriched, evidence)
   const qualification = qualifyCandidate({ candidate: enriched, evidence, scores, settings })
-  const promotable = (qualification.status === 'qualified' && qualification.autoPromotable) || isReasonableProspect(evidence)
-  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, phoneSourceUrl, ...emailFields }
+  // Whatever rule qualifies it, the SITE ITSELF must look like an Iranian
+  // company working with polymer products - not a portal, classifieds or
+  // news site that happened to list one, and not a foreign supplier.
+  const siteOwn = siteOwnSignals({ candidate, signals, homepageText: visibleText(home.text).slice(0, 8000) })
+  const promotable = siteOwn.ok && ((qualification.status === 'qualified' && qualification.autoPromotable) || isReasonableProspect(evidence))
+  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, siteOwn, phoneSourceUrl, ...emailFields }
 }

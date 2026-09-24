@@ -782,6 +782,8 @@ await check('lookup: bracket-obfuscated and Cloudflare-protected addresses are d
   assert.deepEqual(extractEmails('sales (at) acme (dot) ir'), ['sales@acme.ir'])
   assert.deepEqual(extractEmails(`<a href="/cdn-cgi/l/email-protection" data-cfemail="${cloudflareEncode('info@iranavandfar.com')}">[email&#160;protected]</a>`), ['info@iranavandfar.com'])
   assert.deepEqual(extractEmails('Failure at Presize'), [], 'a bare "at" in text is not an address')
+  // tpciran.com wrote '&nbspinfo@tpciran.com' - the entity is not part of the address.
+  assert.deepEqual(extractEmails('ایمیل:&nbspinfo@tpciran.com'), ['info@tpciran.com'])
 })
 
 await check('lookup: an address in a long page footer is still read (pages larger than the old 300 KB cap)', async () => {
