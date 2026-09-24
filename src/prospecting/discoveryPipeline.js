@@ -381,8 +381,13 @@ async function promoteCandidateRow(client, candidateRow, evidence, { createdBy, 
   return lead.id
 }
 
-async function processCandidate(client, { rawItem, source, adapter, run, settings, dedupRecords, createdBy, remainingPromotions, identityBudget, dryRun = false }) {
+async function processCandidate(client, { rawItem, source, adapter, run, settings, dedupRecords, createdBy, remainingPromotions, identityBudget, dryRun = false, deferWebsitePromotions = false }) {
   const normalized = adapter.normalize(rawItem, source)
+  // Server runs register a search result that has a website only after its
+  // own site was read (verifyPendingCandidateSites) - a snippet alone can
+  // describe a company that a portal merely lists, or give a product/
+  // activity phrase as the name.
+  const deferToSite = deferWebsitePromotions && source.source_type === 'search_result' && Boolean(normalized.website)
   if (!normalized.canonical_name) {
     throw new Error('candidate is missing a usable company name')
   }
@@ -462,7 +467,7 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
 
       let rescuePromoted = false
       let rescueWouldPromote = false
-      if (rescueQualification.autoPromotable && rescueQualification.status === 'qualified' && remainingPromotions > 0) {
+      if (!deferToSite && rescueQualification.autoPromotable && rescueQualification.status === 'qualified' && remainingPromotions > 0) {
         if (dryRun) {
           rescueWouldPromote = true
         } else {
@@ -547,7 +552,7 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
 
   let promoted = false
   let wouldPromote = false
-  if (qualification.autoPromotable && finalStatus === 'qualified' && remainingPromotions > 0) {
+  if (!deferToSite && qualification.autoPromotable && finalStatus === 'qualified' && remainingPromotions > 0) {
     if (dryRun) {
       wouldPromote = true
     } else {
@@ -969,6 +974,7 @@ export async function runDiscovery(
               remainingPromotions,
               identityBudget,
               dryRun: effectiveDryRun,
+              deferWebsitePromotions: serverPhases,
             })
             if (result.duplicate) totals.duplicatesDetected += 1
             else if (result.created) totals.candidatesCreated += 1
