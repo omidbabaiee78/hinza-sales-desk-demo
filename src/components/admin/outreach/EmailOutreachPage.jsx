@@ -283,7 +283,7 @@ export default function EmailOutreachPage({ onOpenLead }) {
       <div className="page-toolbar">
         <div>
           <h2>ارسال ایمیل</h2>
-          <p className="today-subtitle">یک ایمیل معرفی خودکار برای هر سرنخ دارای ایمیل، برای هر نشانی فقط یک‌بار. واتساپ و بله در مرحلهٔ بعد اضافه می‌شوند.</p>
+          <p className="today-subtitle">یک ایمیل معرفی خودکار برای هر سرنخ دارای ایمیل، برای هر نشانی فقط یک‌بار. وضعیت واتساپ و بله در «وضعیت کانال‌ها» است.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" className="btn-secondary" disabled={o.loading || o.running} onClick={o.refresh}>

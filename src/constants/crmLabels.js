@@ -13,8 +13,8 @@ export const CRM_REASON_LABELS = {
 // the customer received anything.
 export const CRM_COMM_STATUS_LABELS = {
   manual_action: 'ثبت دستی',
-  opened: 'واتساپ باز شد',
-  copied: 'متن کپی شد',
+  opened: 'لینک واتساپ باز شد (ارسال تأیید نشده)',
+  copied: 'متن کپی شد (ارسال تأیید نشده)',
   sent: 'ارسال شد',
   delivered: 'تحویل داده شد',
   failed: 'ناموفق',
