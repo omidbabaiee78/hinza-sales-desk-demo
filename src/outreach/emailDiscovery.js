@@ -2,6 +2,7 @@ import { fetchPageSafely, decodeHtmlEntities } from '../prospecting/websiteEnric
 import { normalizeEmail, normalizeSearchText } from '../prospecting/normalization.js'
 import { classifyEntityType, isNonCompanyEntityType } from '../prospecting/entityClassification.js'
 import { hasUsableText } from './shared.js'
+import { normalizeDigits } from '../utils/leadImport/digits.js'
 
 // ---------------------------------------------------------------------------
 // Automatic public email lookup for a lead that has no email.
@@ -264,13 +265,104 @@ export function pickCompanyEmail(emails, host) {
   }))
 }
 
+// ---------------------------------------------------------------------------
+// Phone numbers a company publishes on its OWN site (same pages, same
+// identity rules as the email lookup). Stricter than the spreadsheet parser
+// in utils/leadImport/contactNumbers.js, because a web page is full of
+// prices, codes and dates:
+//   - tel: links and WhatsApp links (wa.me/…, api.whatsapp.com/send?phone=)
+//   - a strictly-shaped mobile (0/+98/0098 + 9xx xxx xxxx) in visible text
+//   - a landline (0 + 2-digit area + 8 digits) only right after a phone
+//     label (تلفن، تماس، phone...), never after فکس/نمابر/fax
+// Numbers in a web-designer credit («طراحی سایت: ...», "designed by") are
+// skipped. Nothing is completed or guessed - only numbers literally on the
+// page, with the page URL kept as their source.
+// ---------------------------------------------------------------------------
+
+const PHONE_LABEL = /(تلفن|تلفکس|تماس|همراه|موبایل|شماره|واتس\s*اپ|phone|tel|mobile|call|whatsapp)/i
+const FAX_LABEL = /(فکس|نمابر|fax)/i
+const DESIGNER_CREDIT = /(طراحی\s*(?:و\s*(?:توسعه|پشتیبانی)\s*)?(?:سایت|وب|وبسایت)|طراحی\s*و\s*توسعه|design(?:ed)?\s*by|powered\s*by|developed\s*by)/i
+const MAX_NUMBERS = 3
+
+function localDigits(raw) {
+  const digits = normalizeDigits(String(raw)).replace(/\D/g, '')
+  if (digits.startsWith('0098')) return `0${digits.slice(4)}`
+  if (digits.startsWith('98')) return `0${digits.slice(2)}`
+  return digits
+}
+
+function mobileKey(raw) {
+  const local = localDigits(raw)
+  return /^09\d{9}$/.test(local) ? local : null
+}
+
+function landlineKey(raw) {
+  const local = localDigits(raw)
+  return /^0[1-8]\d{9}$/.test(local) ? local : null
+}
+
+function visibleText(html) {
+  const stripped = String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+  return normalizeDigits(decodeHtmlEntities(stripped)).replace(/\s+/g, ' ')
+}
+
+// -> { mobiles: ['09xxxxxxxxx'], landlines: ['0xxxxxxxxxx'] }
+export function extractPhones(html) {
+  const source = String(html || '')
+  const mobiles = new Set()
+  const landlines = new Set()
+  const creditBefore = (text, index) => DESIGNER_CREDIT.test(text.slice(Math.max(0, index - 160), index))
+
+  for (const m of source.matchAll(/href\s*=\s*["']tel:([^"']+)["']/gi)) {
+    if (creditBefore(source, m.index)) continue
+    const mobile = mobileKey(m[1])
+    if (mobile) mobiles.add(mobile)
+    else {
+      const landline = landlineKey(m[1])
+      if (landline) landlines.add(landline)
+    }
+  }
+  for (const m of source.matchAll(/(?:wa\.me\/|whatsapp\.com\/send\/?\?phone=)\+?(\d{10,14})/gi)) {
+    if (creditBefore(source, m.index)) continue
+    const mobile = mobileKey(m[1])
+    if (mobile) mobiles.add(mobile)
+  }
+
+  const text = visibleText(source)
+  for (const m of text.matchAll(/(?<![\d+])(?:\+98|0098|0)\s?9\d{2}[\s-]?\d{3}[\s-]?\d{4}(?!\d)/g)) {
+    const before = text.slice(Math.max(0, m.index - 30), m.index)
+    if (FAX_LABEL.test(before) || creditBefore(text, m.index)) continue
+    const mobile = mobileKey(m[0])
+    if (mobile) mobiles.add(mobile)
+  }
+  for (const m of text.matchAll(/(?<![\d+])(?:\+98\s?|0098\s?|0)\(?([1-8]\d)\)?[\s-]*(\d{4})[\s-]?(\d{4})(?!\d)/g)) {
+    const before = text.slice(Math.max(0, m.index - 30), m.index)
+    if (!PHONE_LABEL.test(before) || FAX_LABEL.test(before) || creditBefore(text, m.index)) continue
+    const landline = landlineKey(m[0])
+    if (landline) landlines.add(landline)
+  }
+  return { mobiles: [...mobiles].slice(0, MAX_NUMBERS), landlines: [...landlines].slice(0, MAX_NUMBERS) }
+}
+
 // -> { status, email, sourceUrl, reason, pagesFetched }. Never throws.
 // discoveredOn: the website the lead's discovery candidate was found on
 // (null for a manual lead) - see the header.
-export async function lookupCompanyEmail({ websites, companyName, discoveredOn = null, fetchPage = (url) => fetchPageSafely(url, LOOKUP_LIMITS) }) {
+// collectPhones: also gather the numbers the site publishes (extractPhones);
+// the crawl then continues past a found email until a number is found too,
+// and the result adds mobiles/landlines: [{ number, sourceUrl }]. Off by
+// default, so the email pipeline's own lookup behaves exactly as before.
+export async function lookupCompanyEmail({ websites, companyName, discoveredOn = null, fetchPage = (url) => fetchPageSafely(url, LOOKUP_LIMITS), collectPhones = false }) {
+  const mobiles = new Map()
+  const landlines = new Map()
+  const listOf = (map) => [...map].map(([number, sourceUrl]) => ({ number, sourceUrl }))
+  const withPhones = (r) => (collectPhones ? { ...r, mobiles: listOf(mobiles), landlines: listOf(landlines) } : r)
   const site = resolveOfficialWebsite(websites)
-  if (!site.ok) return { status: site.status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[site.status], pagesFetched: 0 }
-  const result = (status, extra = {}) => ({ status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[status], ...extra })
+  if (!site.ok) return withPhones({ status: site.status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[site.status], pagesFetched: 0 })
+  const result = (status, extra = {}) => withPhones({ status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[status], ...extra })
+  let found = null
 
   const discovered = hasUsableText(discoveredOn) ? resolveOfficialWebsite([discoveredOn]) : null
   const siteIsTheLead = Boolean(discovered?.ok && sameSite(discovered.host, site.host))
@@ -306,18 +398,25 @@ export async function lookupCompanyEmail({ websites, companyName, discoveredOn =
       if (!siteIsTheLead && !siteMatchesCompany(page.text, companyName)) return result('identity_mismatch', { pagesFetched })
     }
     anyOk = true
-    const emails = extractEmails(page.text)
-    const email = pickCompanyEmail(emails, site.host)
-    if (email) return { status: 'found', email, sourceUrl: url, reason: EMAIL_LOOKUP_REASONS.found, pagesFetched }
+    if (collectPhones) {
+      const phones = extractPhones(page.text)
+      for (const n of phones.mobiles) if (!mobiles.has(n)) mobiles.set(n, url)
+      for (const n of phones.landlines) if (!landlines.has(n)) landlines.set(n, url)
+    }
+    const emails = found ? [] : extractEmails(page.text)
+    const email = found ? null : pickCompanyEmail(emails, site.host)
+    if (email) found = { status: 'found', email, sourceUrl: url, reason: EMAIL_LOOKUP_REASONS.found }
+    if (found && (!collectPhones || mobiles.size + landlines.size > 0)) return withPhones({ ...found, pagesFetched })
     if (emails.length > 0) sawOtherEmail = true
     for (const link of contactLinks(page.text, url, site.host)) if (!visited.has(link)) queue.push(link)
   }
 
+  if (found) return withPhones({ ...found, pagesFetched })
   if (!anyOk) {
-    return { status: 'fetch_failed', email: null, sourceUrl: null, reason: `${EMAIL_LOOKUP_REASONS.fetch_failed}${lastFailure ? ` (${lastFailure})` : ''}`, pagesFetched }
+    return withPhones({ status: 'fetch_failed', email: null, sourceUrl: null, reason: `${EMAIL_LOOKUP_REASONS.fetch_failed}${lastFailure ? ` (${lastFailure})` : ''}`, pagesFetched })
   }
   const status = sawOtherEmail ? 'only_other_domain' : 'no_email_on_site'
-  return { status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[status], pagesFetched }
+  return withPhones({ status, email: null, sourceUrl: null, reason: EMAIL_LOOKUP_REASONS[status], pagesFetched })
 }
 
 // Which leads the next batch checks: no email, not do_not_contact, not

@@ -103,6 +103,7 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
     websites: [candidate.website],
     companyName: candidate.canonical_name,
     discoveredOn: candidate.website,
+    collectPhones: true,
     fetchPage: cachedFetch,
   })
   const emailFields = {
@@ -110,6 +111,8 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
     emailSourceUrl: lookup.sourceUrl || null,
     emailStatus: lookup.status,
     emailReason: lookup.reason,
+    mobiles: lookup.mobiles || [],
+    landlines: lookup.landlines || [],
   }
   if (lookup.status === 'not_official_website') return { ok: false, status: 'not_company', ...emailFields }
 
@@ -134,9 +137,20 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
     enriched = { ...enriched, canonical_name: name, normalized_name_key: normalizedNameKey(name) }
   }
   if (emailFields.email && !enriched.email) enriched = { ...enriched, email: emailFields.email }
+  // Numbers the site itself publishes fill empty fields only (never a
+  // snippet number the search result already gave).
+  let phoneSourceUrl = null
+  if (!enriched.mobile && emailFields.mobiles.length > 0) {
+    enriched = { ...enriched, mobile: emailFields.mobiles.slice(0, 2).map((m) => m.number).join('، ') }
+    phoneSourceUrl = emailFields.mobiles[0].sourceUrl
+  }
+  if (!enriched.phone && emailFields.landlines.length > 0) {
+    enriched = { ...enriched, phone: emailFields.landlines.slice(0, 2).map((l) => l.number).join('، ') }
+    phoneSourceUrl = phoneSourceUrl || emailFields.landlines[0].sourceUrl
+  }
 
   const scores = scoreCandidate(enriched, evidence)
   const qualification = qualifyCandidate({ candidate: enriched, evidence, scores, settings })
   const promotable = (qualification.status === 'qualified' && qualification.autoPromotable) || isSiteConfirmedBuyer(evidence)
-  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, ...emailFields }
+  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, phoneSourceUrl, ...emailFields }
 }

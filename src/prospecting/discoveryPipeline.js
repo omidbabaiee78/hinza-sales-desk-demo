@@ -22,6 +22,8 @@ import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, searchWeb } 
 import { verifyCandidateSite, snippetSaysNotCompany } from './siteVerification.js'
 import { findLeadEmailViaSearch, LEAD_SITE_SEARCH_STATUSES } from './leadSiteSearch.js'
 import { tehranDateKey } from '../utils/leadFollowUp.js'
+import { enrichLeadContacts, contactPatchFor, takenContacts } from './leadContactEnrichment.js'
+import { normalizeMobile } from '../outreach/contactPoints.js'
 
 // ---------------------------------------------------------------------------
 // Phase 23D-FINAL.1, "FINAL AUTONOMY BLOCKER" round, section 1 - IDENTITY
@@ -68,11 +70,20 @@ const DEFAULT_ROTATING_QUERIES_PER_RUN = 10
 const DEFAULT_DAILY_NEW_EMAIL_TARGET = 20
 // Share of the run's time budget the search/snippet phase may use; the
 // rest is kept for reading candidates' own websites.
-const DISCOVERY_PHASE_SHARE = 0.5
+const DISCOVERY_PHASE_SHARE = 0.45
+// Then candidates' websites until this share, registered leads' own
+// websites (contact enrichment) until the next, and the paid official-site
+// search last.
+const SITE_VERIFY_PHASE_END = 0.72
+const LEAD_ENRICH_PHASE_END = 0.9
+// Registered leads whose own website is read per scheduled run (no paid
+// search involved - see leadContactEnrichment.js).
+const MAX_LEAD_ENRICHMENTS_PER_RUN = 8
 const SITE_VERIFY_CONCURRENCY = 4
 // Websites read per run - page parsing is the run's main CPU cost, and
-// Edge Functions have a CPU-time limit. 10 runs a day = 160 sites.
-const MAX_SITE_CHECKS_PER_RUN = 16
+// Edge Functions have a CPU-time limit (each run also reads up to
+// MAX_LEAD_ENRICHMENTS_PER_RUN lead websites). 10 runs a day = 120 sites.
+const MAX_SITE_CHECKS_PER_RUN = 12
 // Days before a website that failed to load is tried again.
 const SITE_FETCH_RETRY_DAYS = 3
 // Web searches per run for leads whose recorded website is not their own.
@@ -594,7 +605,7 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
   const summary = { pending: 0, checked: 0, promoted: 0, wouldPromote: 0, promotedWithEmail: 0, emailsFound: 0, duplicates: 0, errors: 0, byStatus: {}, stoppedBy: null }
   const [candidatesRes, leadsRes, sourcesRes] = await Promise.all([
     client.from('prospect_candidates').select('*').in('status', ['manual_review', 'qualified']),
-    client.from('sales_leads').select('id, email, website'),
+    client.from('sales_leads').select('id, email, website, mobile, phone'),
     client.from('prospect_sources').select('id, name'),
   ])
   if (candidatesRes.error) throw candidatesRes.error
@@ -607,6 +618,9 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
   summary.pending = pending.length
   const leadIdByEmail = new Map((leadsRes.data || []).filter((l) => normalizeEmail(l.email)).map((l) => [normalizeEmail(l.email), l.id]))
   const leadIdByHost = new Map((leadsRes.data || []).filter((l) => hostOfUrl(l.website)).map((l) => [hostOfUrl(l.website), l.id]))
+  // A mobile the site publishes that is already on a lead means the same
+  // company is already registered (e.g. entered by hand).
+  const leadIdByMobile = takenContacts(leadsRes.data || []).mobiles
   const sourceNameById = new Map((sourcesRes.data || []).map((src) => [src.id, src.name]))
   const count = (status) => {
     summary.byStatus[status] = (summary.byStatus[status] || 0) + 1
@@ -639,7 +653,8 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
     }
     const email = normalizeEmail(result.email)
     if (email) summary.emailsFound += 1
-    const matchedLeadId = (email && leadIdByEmail.get(email)) || leadIdByHost.get(hostOfUrl(candidate.website)) || null
+    const siteMobile = result.mobiles?.[0] ? normalizeMobile(result.mobiles[0].number) : null
+    const matchedLeadId = (email && leadIdByEmail.get(email)) || leadIdByHost.get(hostOfUrl(candidate.website)) || (siteMobile && leadIdByMobile.get(siteMobile)) || null
     // A fuzzy name match to another lead/candidate stays for review, as in
     // processCandidate().
     const promote = result.promotable && !matchedLeadId && !candidate.match_explanation
@@ -657,6 +672,9 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
     const updated = await markChecked(candidate, {
       site_check_status: result.emailStatus === 'found' ? 'email_found' : result.emailStatus || 'checked',
       site_email_source_url: result.emailSourceUrl,
+      site_phone_source_url: result.phoneSourceUrl,
+      mobile: candidate.mobile || enriched.mobile || null,
+      phone: candidate.phone || enriched.phone || null,
       canonical_name: enriched.canonical_name,
       normalized_name_key: enriched.normalized_name_key,
       business_description: enriched.business_description,
@@ -689,6 +707,9 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
         email_lookup_reason: result.emailReason,
         email_lookup_at: new Date(now).toISOString(),
         email_source_url: email ? result.emailSourceUrl : null,
+        phone_source_url: result.phoneSourceUrl,
+        contact_lookup_status: email || result.phoneSourceUrl ? 'found' : result.emailStatus,
+        contact_lookup_at: new Date(now).toISOString(),
       })
       .eq('id', leadId)
     if (error) throw error
@@ -719,11 +740,11 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
 // recorded website is not the company's own: one web search each for the
 // official site (leadSiteSearch.js). Each lead is searched once.
 export async function searchOfficialSitesForLeads(client, { deadline, maxSearches, search, fetchPage, now = Date.now() }) {
-  const summary = { searched: 0, found: 0, byStatus: {}, errors: 0 }
+  const summary = { searched: 0, found: 0, phonesFound: 0, byStatus: {}, errors: 0 }
   if (maxSearches <= 0) return summary
   const { data: leads, error } = await client.from('sales_leads').select('*')
   if (error) throw error
-  const takenEmails = new Set((leads || []).map((l) => normalizeEmail(l.email)).filter(Boolean))
+  const taken = takenContacts(leads || [])
   const due = (leads || []).filter(
     (l) =>
       !normalizeEmail(l.email) &&
@@ -745,18 +766,17 @@ export async function searchOfficialSitesForLeads(client, { deadline, maxSearche
     }
     if (result.status !== 'name_too_generic') summary.searched += 1
     summary.byStatus[result.status] = (summary.byStatus[result.status] || 0) + 1
-    const email = normalizeEmail(result.email)
     const patch = { official_site_search_at: new Date(now).toISOString() }
-    if (result.status === 'found' && email && !takenEmails.has(email)) {
-      takenEmails.add(email)
-      summary.found += 1
-      Object.assign(patch, {
-        email,
-        email_source_url: result.sourceUrl,
-        email_lookup_status: 'found',
-        email_lookup_reason: `ایمیل در وب‌سایت رسمی شرکت پیدا شد (وب‌سایت با جستجوی نام شرکت یافت شد: ${result.site})`,
-        email_lookup_at: new Date(now).toISOString(),
-      })
+    // Same fill-only-empty / never-another-lead's-contact rules as the site
+    // enrichment; the phones the official site publishes are kept too.
+    const found = result.site ? contactPatchFor(lead, result, taken, new Date(now)) : null
+    if (found) {
+      Object.assign(patch, found.patch, { contact_lookup_status: 'found', contact_lookup_at: new Date(now).toISOString() })
+      if (found.added.includes('email')) {
+        summary.found += 1
+        patch.email_lookup_reason = `ایمیل در وب‌سایت رسمی شرکت پیدا شد (وب‌سایت با جستجوی نام شرکت یافت شد: ${result.site})`
+      }
+      if (found.added.includes('mobile') || found.added.includes('phone')) summary.phonesFound += 1
     }
     const { error: updateError } = await client.from('sales_leads').update(patch).eq('id', lead.id)
     if (updateError) summary.errors += 1
@@ -886,6 +906,7 @@ export async function runDiscovery(
   let itemsNotProcessed = 0
   let siteVerification = null
   let leadSiteSearch = null
+  let leadContacts = null
 
   try {
     for (const source of sources) {
@@ -986,7 +1007,7 @@ export async function runDiscovery(
       const promotedSoFar = effectiveDryRun ? totals.wouldPromoteCount : totals.candidatesPromoted
       siteVerification = await verifyPendingCandidateSites(client, {
         settings,
-        deadline: runStartedAt + runTimeoutMs,
+        deadline: runStartedAt + runTimeoutMs * SITE_VERIFY_PHASE_END,
         createdBy,
         dryRun: effectiveDryRun,
         promotions: { remaining: Math.max(0, settings.max_promotions_per_run - promotedSoFar) },
@@ -996,6 +1017,12 @@ export async function runDiscovery(
       totals.wouldPromoteCount += siteVerification.wouldPromote
       totals.errorsCount += siteVerification.errors
       if (!effectiveDryRun) {
+        leadContacts = await enrichLeadContacts(client, {
+          deadline: runStartedAt + runTimeoutMs * LEAD_ENRICH_PHASE_END,
+          maxLeads: MAX_LEAD_ENRICHMENTS_PER_RUN,
+          fetchPage,
+        })
+        totals.errorsCount += leadContacts.errors
         const searches = Math.min(MAX_LEAD_SITE_SEARCHES_PER_RUN, externalRequestBudget.remaining)
         leadSiteSearch = await searchOfficialSitesForLeads(client, {
           deadline: runStartedAt + runTimeoutMs,
@@ -1068,6 +1095,7 @@ export async function runDiscovery(
         itemsNotProcessed,
         siteVerification,
         leadSiteSearch,
+        leadContacts,
         dailyEmailTarget,
         emailsFoundTodayBefore: emailsFoundBefore,
         emailsFoundTodayAfter: serverPhases && !effectiveDryRun ? await countEmailsFoundToday(client) : null,

@@ -42,8 +42,8 @@ export async function findLeadEmailViaSearch({ companyName, search, fetchPage = 
     if (isNonCompanyEntityType(entityType)) continue
     const home = await fetchPage(site.homepage)
     if (!home.ok || !identityHasAllWords(home.text, words)) continue
-    const lookup = await lookupCompanyEmail({ websites: [site.homepage], companyName, fetchPage })
-    return { status: lookup.status, email: lookup.email, sourceUrl: lookup.sourceUrl, site: site.homepage, reason: lookup.reason }
+    const lookup = await lookupCompanyEmail({ websites: [site.homepage], companyName, fetchPage, collectPhones: true })
+    return { status: lookup.status, email: lookup.email, sourceUrl: lookup.sourceUrl, site: site.homepage, reason: lookup.reason, mobiles: lookup.mobiles, landlines: lookup.landlines }
   }
   return { status: 'official_site_not_found', email: null, sourceUrl: null, site: null }
 }
