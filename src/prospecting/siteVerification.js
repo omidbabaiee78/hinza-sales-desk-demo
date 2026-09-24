@@ -76,7 +76,9 @@ const IRAN_SIGNAL = /[؀-ۿ]|\biran\b/i
 // («با ۵ خط تولید»), and «قالب سازی و تزریق» is an injection moulder.
 const MACHINERY_SELF_DESCRIPTION = /(ماشین|دستگاه|machine|machinery)/i
 // «ثبت شغل» and similar business-registration / listing sites.
-const LISTING_SELF_DESCRIPTION = /(ثبت شغل|ثبت مشاغل|ثبت کسب و کار|ثبت رایگان|دایرکتوری|راهنمای مشاغل)/
+// ... and exhibition platforms (aria24.com «سامانه هوشمندسازی نمایشگاهی»),
+// which list exhibitors' products.
+const LISTING_SELF_DESCRIPTION = /(ثبت شغل|ثبت مشاغل|ثبت کسب و کار|ثبت رایگان|دایرکتوری|راهنمای مشاغل|نمایشگاهی|برگزاری نمایشگاه|نمایشگاه مجازی|نمایشگاه آنلاین)/
 // «فروش انواع پلی اتیلن صنعتی» - a raw-polymer seller neither makes nor
 // uses polymer products.
 const RAW_MATERIAL_TRADER = /(فروش|عرضه|واردات|وارد کننده|پخش|بازرگانی)\s+(انواع\s+)?(مواد اولیه|گرانول|پلی اتیلن|پلی پروپیلن|پلیمر|پی وی سی|pvc)/i
