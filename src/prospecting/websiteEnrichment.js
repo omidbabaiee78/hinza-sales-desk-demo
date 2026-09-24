@@ -291,6 +291,26 @@ function extractTitleTagText(html) {
   return match?.[1]?.trim() ? decodeHtmlEntities(match[1].trim()) : null
 }
 
+// The same homepage identity markers fetchIdentitySignals() reads, plus the
+// meta description, from HTML the caller already fetched (siteVerification.js
+// reuses the pages its email lookup loaded instead of fetching them again).
+export function identitySignalsFromHtml(html) {
+  const text = html || ''
+  return {
+    jsonLdOrganizationName: extractJsonLdOrganizationName(text),
+    ogSiteName: extractMetaContent(text, 'og:site_name'),
+    titleText: extractTitleTagText(text),
+    description: extractMetaContent(text, 'og:description') || extractNamedMeta(text, 'description'),
+  }
+}
+
+function extractNamedMeta(html, name) {
+  const match =
+    html.match(new RegExp(`<meta[^>]+name\\s*=\\s*["']${name}["'][^>]+content\\s*=\\s*["']([^"']+)["']`, 'i')) ||
+    html.match(new RegExp(`<meta[^>]+content\\s*=\\s*["']([^"']+)["'][^>]+name\\s*=\\s*["']${name}["']`, 'i'))
+  return match?.[1]?.trim() ? decodeHtmlEntities(match[1].trim()) : null
+}
+
 // { homepageUrl, limits? } -> { ok, attempts, jsonLdOrganizationName,
 // ogSiteName, titleText, aboutText, contactText }. Fetches the homepage
 // (mandatory) plus, IF linked from it, an About page and a Contact page -

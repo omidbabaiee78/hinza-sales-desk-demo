@@ -274,6 +274,9 @@ Deno.serve(async (req) => {
       runType,
       createdBy: auth.userId,
       dryRun: dryRun || manualTest,
+      // Read pending candidates' own websites and search leads' official
+      // sites after the sources (discoveryPipeline.js runDiscovery header).
+      serverPhases: true,
       // manualTest must be able to exercise the SAME runType:'scheduled' path
       // the real daily cron will use, WITHOUT requiring the persisted
       // prospect_settings.daily_run_enabled to be temporarily flipped on -
@@ -290,7 +293,7 @@ Deno.serve(async (req) => {
       // exceed 3 candidates/2 external requests, and never itself enables
       // anything persisted.
       settingsOverride: manualTest
-        ? { daily_run_enabled: true, max_candidates_per_source_per_run: 3, max_external_requests_per_run: 2 }
+        ? { daily_run_enabled: true, max_candidates_per_source_per_run: 3, max_external_requests_per_run: 2, run_timeout_ms: 60000 }
         : null,
     })
     const durationMs = Date.now() - startedAt
@@ -318,6 +321,12 @@ Deno.serve(async (req) => {
       candidates_promoted: run.candidates_promoted,
       duplicates_detected: run.duplicates_detected,
       errors_count: run.errors_count,
+      items_not_processed: run.summary?.itemsNotProcessed ?? 0,
+      site_verification: run.summary?.siteVerification ?? null,
+      lead_site_search: run.summary?.leadSiteSearch ?? null,
+      emails_found_today_before: run.summary?.emailsFoundTodayBefore ?? null,
+      emails_found_today_after: run.summary?.emailsFoundTodayAfter ?? null,
+      daily_email_target: run.summary?.dailyEmailTarget ?? null,
       duration_ms: durationMs,
     }
 

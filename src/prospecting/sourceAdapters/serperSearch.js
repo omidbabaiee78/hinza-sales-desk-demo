@@ -52,6 +52,38 @@ export const DEFAULT_QUERY_TEMPLATES = [
   'تولید کننده کامپاند پلیمری',
 ]
 
+// Rotation (config.rotate = true): the query space is every template x
+// location x result page, walked in order from config.rotationCursor, at
+// most `maxQueries` per run (the run's external-request budget). The
+// pipeline saves the returned cursor, so each daily run searches NEW
+// result pages instead of re-reading the same first page of the same
+// queries - repeating those only ever re-found the same ~100 links.
+export const DEFAULT_LOCATIONS = ['', 'تهران', 'اصفهان', 'مشهد', 'تبریز', 'شیراز', 'قم', 'کرج', 'اراک', 'یزد', 'قزوین', 'ساوه', 'کاشان', 'رشت', 'ارومیه', 'کرمان', 'همدان', 'زنجان', 'سمنان', 'اهواز']
+const DEFAULT_MAX_PAGES = 3
+
+export function buildQueryPlan(config = {}) {
+  const templates = Array.isArray(config.queryTemplates) && config.queryTemplates.length ? config.queryTemplates : DEFAULT_QUERY_TEMPLATES
+  const locations = Array.isArray(config.locations) && config.locations.length ? config.locations : DEFAULT_LOCATIONS
+  const maxPages = Number.isFinite(config.maxPages) && config.maxPages >= 1 ? Math.floor(config.maxPages) : DEFAULT_MAX_PAGES
+  const plan = []
+  for (let page = 1; page <= maxPages; page += 1) {
+    for (const location of locations) {
+      for (const template of templates) plan.push({ q: `${template} ${location}`.trim(), page })
+    }
+  }
+  return plan
+}
+
+// The next `count` queries from `cursor`, wrapping around the plan.
+export function nextRotationSlice(plan, cursor, count) {
+  if (plan.length === 0) return { queries: [], nextCursor: 0 }
+  const start = Number.isFinite(cursor) && cursor >= 0 ? Math.floor(cursor) % plan.length : 0
+  const n = Math.min(Math.max(1, count), plan.length)
+  const queries = []
+  for (let i = 0; i < n; i += 1) queries.push(plan[(start + i) % plan.length])
+  return { queries, nextCursor: (start + n) % plan.length }
+}
+
 const SERPER_SEARCH_URL = 'https://google.serper.dev/search'
 const DEFAULT_GL = 'ir'
 const DEFAULT_HL = 'fa'
@@ -81,7 +113,7 @@ function validateConfig(config) {
   return null
 }
 
-async function runSearch({ apiKey, query, gl, hl, num, timeoutMs }) {
+async function runSearch({ apiKey, query, gl, hl, num, page = 1, timeoutMs }) {
   const controller = new AbortController()
   const timeoutError = new Error(`درخواست به Serper API برای عبارت «${query}» بیش از ${timeoutMs} میلی‌ثانیه طول کشید.`)
   timeoutError.isTimeout = true
@@ -92,7 +124,7 @@ async function runSearch({ apiKey, query, gl, hl, num, timeoutMs }) {
     response = await fetch(SERPER_SEARCH_URL, {
       method: 'POST',
       headers: { 'X-API-KEY': apiKey, 'content-type': 'application/json' },
-      body: JSON.stringify({ q: query, gl, hl, num }),
+      body: JSON.stringify(page > 1 ? { q: query, gl, hl, num, page } : { q: query, gl, hl, num }),
       signal: controller.signal,
     })
   } catch (err) {
@@ -108,6 +140,15 @@ async function runSearch({ apiKey, query, gl, hl, num, timeoutMs }) {
     throw error
   }
   return response.json()
+}
+
+// One plain web search (the lead official-site search in
+// leadSiteSearch.js). Server-side only, like discover(). -> organic results.
+export async function searchWeb(query, { num = 5, gl = DEFAULT_GL, hl = DEFAULT_HL } = {}) {
+  const apiKey = getApiKey()
+  if (!apiKey) throw new Error('credential_required: SERPER_API_KEY')
+  const payload = await runSearch({ apiKey, query, gl, hl, num, timeoutMs: SEARCH_FETCH_TIMEOUT_MS })
+  return payload?.organic || []
 }
 
 // Best-effort company-name guess from a search result's own title/domain -
@@ -170,7 +211,7 @@ const EMAIL_IN_TEXT_REGEX = /[\w.+-]+@[\w-]+\.[\w.-]+/
 export const serperSearchAdapter = {
   sourceType: 'search_result',
 
-  async discover(source) {
+  async discover(source, { maxQueries = null } = {}) {
     const config = source?.config || {}
     const configError = validateConfig(config)
     if (configError) throw new Error(configError)
@@ -187,7 +228,13 @@ export const serperSearchAdapter = {
     const resultsPerQuery = Number.isFinite(config.resultsPerQuery) ? config.resultsPerQuery : DEFAULT_RESULTS_PER_QUERY
     const gl = config.gl || DEFAULT_GL
     const hl = config.hl || DEFAULT_HL
-    const templatesToRun = queryTemplates.slice(0, Math.max(1, maxQueriesPerRun))
+    let searches = queryTemplates.slice(0, Math.max(1, maxQueriesPerRun)).map((q) => ({ q, page: 1 }))
+    let nextCursor = null
+    if (config.rotate === true) {
+      const slice = nextRotationSlice(buildQueryPlan(config), config.rotationCursor, maxQueries ?? maxQueriesPerRun)
+      searches = slice.queries
+      nextCursor = slice.nextCursor
+    }
 
     const results = []
     const seenLinks = new Set()
@@ -196,10 +243,10 @@ export const serperSearchAdapter = {
     // Sequential, never Promise.all'd - same "don't hammer shared/rate-
     // limited infrastructure" discipline as the OSM adapter, and it also
     // keeps credit spend predictable (one request in flight at a time).
-    for (const query of templatesToRun) {
+    for (const { q: query, page } of searches) {
       let payload
       try {
-        payload = await runSearch({ apiKey, query, gl, hl, num: resultsPerQuery, timeoutMs: SEARCH_FETCH_TIMEOUT_MS })
+        payload = await runSearch({ apiKey, query, gl, hl, num: resultsPerQuery, page, timeoutMs: SEARCH_FETCH_TIMEOUT_MS })
       } catch (err) {
         // One query failing (a transient timeout, a single bad request)
         // must never abort the whole source - the same "one failure never
@@ -211,9 +258,11 @@ export const serperSearchAdapter = {
       for (const item of payload?.organic || []) {
         if (!item?.link || seenLinks.has(item.link)) continue
         seenLinks.add(item.link)
-        results.push({ ...item, _sourceQuery: query })
+        results.push({ ...item, _sourceQuery: page > 1 ? `${query} (صفحه ${page})` : query })
       }
     }
+    // Read by runDiscovery() and saved to config.rotationCursor.
+    if (nextCursor !== null) results.nextCursor = nextCursor
 
     if (results.length === 0 && queryErrors.length > 0) {
       throw new Error(`هیچ نتیجه‌ای از Serper API دریافت نشد: ${queryErrors.join('، ')}`)

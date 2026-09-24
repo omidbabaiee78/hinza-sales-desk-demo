@@ -77,6 +77,12 @@ export const NON_BUYER_ORG_SIGNALS = [
       'تولیدکننده ماشین آلات',
       'سازنده ماشین آلات',
       'سازنده دستگاه',
+      // A packaging-machinery maker's own site: «تولیدکننده (تخصصی)
+      // دستگاه‌های بسته‌بندی» (iranosanat.com) - it builds the machines
+      // its customers use, it does not buy polymer itself.
+      'تولیدکننده دستگاه',
+      'تولید کننده دستگاه',
+      'تولیدکننده تخصصی دستگاه',
       'فروش خط تولید',
       'سازنده خط تولید',
       'طراحی و ساخت خط تولید',

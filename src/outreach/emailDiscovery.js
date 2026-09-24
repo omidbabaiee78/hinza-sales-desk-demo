@@ -47,13 +47,13 @@ const GENERIC_NAME_WORDS = new Set(
   ].map((w) => normalizeSearchText(w)),
 )
 
-function distinctiveNameWords(companyName) {
+export function distinctiveNameWords(companyName) {
   return normalizeSearchText(companyName || '')
     .split(/[^\p{L}\p{N}]+/u)
     .filter((w) => w.length >= 3 && !GENERIC_NAME_WORDS.has(w))
 }
 
-function siteIdentityText(html) {
+export function siteIdentityText(html) {
   const parts = []
   const title = /<title[^>]*>([^<]+)<\/title>/i.exec(html || '')
   if (title) parts.push(title[1])
@@ -111,11 +111,39 @@ const IGNORED_LOCAL_PARTS = /^(no-?reply|donotreply|webmaster|hostmaster|postmas
 // "www.acme@gmail.com" - a website address typed into an email; it does
 // not exist, so it is treated as malformed rather than "fixed".
 const MALFORMED_LOCAL_PART = /^www\./i
-const FALLBACK_CONTACT_PATHS = ['/contact-us/', '/contact/']
+const FALLBACK_CONTACT_PATHS = ['/contact-us/', '/contact/', '/about-us/', '/about/']
 const PREFERRED_LOCAL_PARTS = ['sales', 'info', 'contact', 'office', 'marketing', 'commercial']
-const CONTACT_LINK = /contact|تماس/i
-const EMAIL_IN_TEXT = /[a-z0-9][a-z0-9._%+-]*@[a-z0-9][a-z0-9.-]*\.[a-z]{2,}/gi
-const LOOKUP_LIMITS = { timeoutMs: 6000, maxBytes: 300000 }
+// «تماس با ما», «ارتباط با ما», «درباره ما» - many Iranian sites publish
+// the address only on the about page, or label the contact link «ارتباط».
+const CONTACT_LINK = /contact|about|تماس|ارتباط|درباره/i
+const CONTACT_FIRST = /contact|تماس|ارتباط/i
+const MAX_CONTACT_LINKS = 3
+const MAX_PAGES = 6
+// Bounded to RFC lengths: an unbounded local part makes the scan quadratic
+// on long unbroken runs (base64 images, minified code) in big pages.
+const EMAIL_IN_TEXT = /[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9][a-z0-9.-]{0,252}\.[a-z]{2,24}/gi
+// Page builders put the footer (where the address usually is) after
+// several hundred KB of inline CSS/JS, so the byte cap must be generous.
+export const LOOKUP_LIMITS = { timeoutMs: 12000, maxBytes: 1000000 }
+
+// Cloudflare "email protection": the address is XOR-encoded in
+// data-cfemail="..." or /cdn-cgi/l/email-protection#... - decoded exactly,
+// never guessed.
+function decodeCloudflareEmail(hex) {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length < 4 || hex.length % 2) return ''
+  const key = parseInt(hex.slice(0, 2), 16)
+  let out = ''
+  for (let i = 2; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key)
+  return out
+}
+
+// "info[at]acme.ir", "sales (at) acme (dot) ir" -> the literal address the
+// site publishes. Only bracketed forms: a bare " at " is ordinary English.
+function deobfuscate(text) {
+  return text
+    .replace(/\s*[[({]\s*(?:at|@)\s*[\])}]\s*/gi, '@')
+    .replace(/\s*[[({]\s*dot\s*[\])}]\s*/gi, '.')
+}
 
 function hostOf(url) {
   try {
@@ -149,7 +177,8 @@ export function resolveOfficialWebsite(candidates) {
 }
 
 export function extractEmails(html) {
-  let text = decodeHtmlEntities(html || '')
+  const cloudflare = [...(html || '').matchAll(/(?:data-cfemail=["']|email-protection#)([0-9a-f]{6,})/gi)].map((m) => decodeCloudflareEmail(m[1]))
+  let text = deobfuscate(`${decodeHtmlEntities(html || '')} ${cloudflare.join(' ')}`)
   try {
     text = decodeURIComponent(text)
   } catch {
@@ -164,11 +193,13 @@ export function extractEmails(html) {
   return found
 }
 
+// Same-site contact pages, «تماس/ارتباط/contact» links before «درباره/about».
 function contactLinks(html, baseUrl, host) {
-  const links = []
+  const contact = []
+  const about = []
   const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,300}?)<\/a>/gi
   let match
-  while ((match = re.exec(html || '')) && links.length < 2) {
+  while ((match = re.exec(html || '')) && contact.length < MAX_CONTACT_LINKS) {
     let href = match[1]
     try {
       href = decodeURIComponent(href)
@@ -179,12 +210,14 @@ function contactLinks(html, baseUrl, host) {
     try {
       const url = new URL(match[1], baseUrl)
       const linkHost = url.hostname.toLowerCase().replace(/^www\./, '')
-      if (/^https?:$/.test(url.protocol) && sameSite(linkHost, host) && !links.includes(url.href)) links.push(url.href)
+      if (!/^https?:$/.test(url.protocol) || !sameSite(linkHost, host)) continue
+      const list = CONTACT_FIRST.test(href) || CONTACT_FIRST.test(match[2]) ? contact : about
+      if (!contact.includes(url.href) && !about.includes(url.href)) list.push(url.href)
     } catch {
       // unparseable
     }
   }
-  return links
+  return [...contact, ...about].slice(0, MAX_CONTACT_LINKS)
 }
 
 function lettersOnly(text) {
@@ -249,7 +282,7 @@ export async function lookupCompanyEmail({ websites, companyName, discoveredOn =
   let lastFailure = null
   let sawOtherEmail = false
 
-  while (pagesFetched < 5) {
+  while (pagesFetched < MAX_PAGES) {
     if (queue.length === 0) {
       // Nothing left and nothing found: try the usual contact paths once.
       if (triedFallback || !anyOk) break

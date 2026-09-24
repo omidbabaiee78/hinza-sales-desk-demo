@@ -18,7 +18,10 @@ import { qualifyCandidate } from './qualification.js'
 import { isPromotableIdentity, resolveVerifiedIdentity, isPlausibleOrganizationName, IDENTITY_STATUS } from './identityResolution.js'
 import { fetchIdentitySignals } from './websiteEnrichment.js'
 import { serializePromotedLead } from './promotion.js'
-import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES } from './sourceAdapters/serperSearch.js'
+import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, searchWeb } from './sourceAdapters/serperSearch.js'
+import { verifyCandidateSite, snippetSaysNotCompany } from './siteVerification.js'
+import { findLeadEmailViaSearch, LEAD_SITE_SEARCH_STATUSES } from './leadSiteSearch.js'
+import { tehranDateKey } from '../utils/leadFollowUp.js'
 
 // ---------------------------------------------------------------------------
 // Phase 23D-FINAL.1, "FINAL AUTONOMY BLOCKER" round, section 1 - IDENTITY
@@ -56,6 +59,25 @@ const DEFAULT_RUN_TIMEOUT_MS = 4 * 60 * 1000 // 4 minutes - safely under a Supab
 // reclaimed rather than permanently blocking every future daily run.
 const STALE_SCHEDULED_RUN_THRESHOLD_MS = 30 * 60 * 1000
 
+// Search sources with config.rotate walk a query x city x page plan (see
+// serperSearch.js buildQueryPlan) this many queries per run by default.
+const DEFAULT_ROTATING_QUERIES_PER_RUN = 10
+// New public emails per Tehran day after which scheduled runs stop
+// searching (prospect_settings.daily_new_email_target). The sender's own
+// cap (20/day) is separate and unchanged.
+const DEFAULT_DAILY_NEW_EMAIL_TARGET = 20
+// Share of the run's time budget the search/snippet phase may use; the
+// rest is kept for reading candidates' own websites.
+const DISCOVERY_PHASE_SHARE = 0.5
+const SITE_VERIFY_CONCURRENCY = 4
+// Websites read per run - page parsing is the run's main CPU cost, and
+// Edge Functions have a CPU-time limit. 10 runs a day = 160 sites.
+const MAX_SITE_CHECKS_PER_RUN = 16
+// Days before a website that failed to load is tried again.
+const SITE_FETCH_RETRY_DAYS = 3
+// Web searches per run for leads whose recorded website is not their own.
+const MAX_LEAD_SITE_SEARCHES_PER_RUN = 4
+
 // A rough, conservative per-source request-cost ESTIMATE used only to decide
 // whether a source fits inside the run-wide external-request budget BEFORE
 // calling adapter.discover() - never an exact count of what the adapter ends
@@ -66,6 +88,7 @@ const STALE_SCHEDULED_RUN_THRESHOLD_MS = 30 * 60 * 1000
 // have no live network cost from the orchestrator's point of view.
 function estimateSourceRequestCost(source) {
   if (source.source_type === 'search_result') {
+    if (source.config?.rotate === true) return Math.max(1, Number(source.config.queriesPerRun) || DEFAULT_ROTATING_QUERIES_PER_RUN)
     const templates = Array.isArray(source.config?.queryTemplates) ? source.config.queryTemplates.length : DEFAULT_SERPER_QUERY_TEMPLATES.length
     return Math.max(1, templates)
   }
@@ -537,6 +560,210 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
   }
 }
 
+function hostOfUrl(url) {
+  try {
+    return new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return null
+  }
+}
+
+// Public emails found today (Tehran day) - by the site step below, the
+// lead site search, or the sender's own lookup: every path records
+// email_lookup_status='found' + email_lookup_at on the lead.
+async function countEmailsFoundToday(client, now = new Date()) {
+  const { data, error } = await client.from('sales_leads').select('email_lookup_status, email_lookup_at')
+  if (error) throw error
+  const today = tehranDateKey(now)
+  return (data || []).filter((l) => l.email_lookup_status === 'found' && l.email_lookup_at && tehranDateKey(new Date(l.email_lookup_at)) === today).length
+}
+
+function isSitePending(candidate, now) {
+  if (!candidate.website) return false
+  if (!candidate.site_checked_at) return true
+  if (candidate.site_check_status !== 'fetch_failed') return false
+  return now - new Date(candidate.site_checked_at).getTime() >= SITE_FETCH_RETRY_DAYS * 24 * 60 * 60 * 1000
+}
+
+// Reads each not-yet-checked candidate's own website (siteVerification.js),
+// re-qualifies it with that text, and promotes the ones the site confirms,
+// with the email the site publishes. Newest discoveries first; stops at the
+// deadline or when the run's promotion budget is used up (the rest stay
+// pending for the next run). dryRun: reads and counts, writes nothing.
+export async function verifyPendingCandidateSites(client, { settings, deadline, createdBy = null, dryRun = false, promotions, fetchPage, now = Date.now() }) {
+  const summary = { pending: 0, checked: 0, promoted: 0, wouldPromote: 0, promotedWithEmail: 0, emailsFound: 0, duplicates: 0, errors: 0, byStatus: {}, stoppedBy: null }
+  const [candidatesRes, leadsRes, sourcesRes] = await Promise.all([
+    client.from('prospect_candidates').select('*').in('status', ['manual_review', 'qualified']),
+    client.from('sales_leads').select('id, email, website'),
+    client.from('prospect_sources').select('id, name'),
+  ])
+  if (candidatesRes.error) throw candidatesRes.error
+  if (leadsRes.error) throw leadsRes.error
+  if (sourcesRes.error) throw sourcesRes.error
+
+  const pending = (candidatesRes.data || [])
+    .filter((c) => isSitePending(c, now))
+    .sort((a, b) => String(b.first_seen_at || b.created_at || '').localeCompare(String(a.first_seen_at || a.created_at || '')))
+  summary.pending = pending.length
+  const leadIdByEmail = new Map((leadsRes.data || []).filter((l) => normalizeEmail(l.email)).map((l) => [normalizeEmail(l.email), l.id]))
+  const leadIdByHost = new Map((leadsRes.data || []).filter((l) => hostOfUrl(l.website)).map((l) => [hostOfUrl(l.website), l.id]))
+  const sourceNameById = new Map((sourcesRes.data || []).map((src) => [src.id, src.name]))
+  const count = (status) => {
+    summary.byStatus[status] = (summary.byStatus[status] || 0) + 1
+  }
+
+  async function markChecked(candidate, patch) {
+    if (dryRun) return null
+    const { data, error } = await client
+      .from('prospect_candidates')
+      .update({ site_checked_at: new Date(now).toISOString(), updated_at: new Date().toISOString(), ...patch })
+      .eq('id', candidate.id)
+      .select('*')
+      .single()
+    if (error) throw error
+    return data
+  }
+
+  async function handle(candidate) {
+    if (snippetSaysNotCompany(candidate)) {
+      count('not_company')
+      await markChecked(candidate, { site_check_status: 'not_company' })
+      return
+    }
+    const result = await verifyCandidateSite({ candidate, settings, ...(fetchPage ? { fetchPage } : {}) })
+    summary.checked += 1
+    if (!result.ok) {
+      count(result.status)
+      await markChecked(candidate, { site_check_status: result.status })
+      return
+    }
+    const email = normalizeEmail(result.email)
+    if (email) summary.emailsFound += 1
+    const matchedLeadId = (email && leadIdByEmail.get(email)) || leadIdByHost.get(hostOfUrl(candidate.website)) || null
+    // A fuzzy name match to another lead/candidate stays for review, as in
+    // processCandidate().
+    const promote = result.promotable && !matchedLeadId && !candidate.match_explanation
+    if (promote && promotions.remaining <= 0) {
+      summary.stoppedBy = summary.stoppedBy || 'promotion_budget'
+      return
+    }
+    if (promote) promotions.remaining -= 1
+    if (email && promote) leadIdByEmail.set(email, 'this-run')
+
+    const enriched = result.candidate
+    const status = matchedLeadId ? 'duplicate' : promote ? 'qualified' : result.qualification.status
+    count(matchedLeadId ? 'duplicate' : promote ? 'promoted' : status)
+    if (matchedLeadId) summary.duplicates += 1
+    const updated = await markChecked(candidate, {
+      site_check_status: result.emailStatus === 'found' ? 'email_found' : result.emailStatus || 'checked',
+      site_email_source_url: result.emailSourceUrl,
+      canonical_name: enriched.canonical_name,
+      normalized_name_key: enriched.normalized_name_key,
+      business_description: enriched.business_description,
+      email: candidate.email || email || null,
+      relevance_score: result.scores.relevanceScore,
+      contact_quality_score: result.scores.contactQualityScore,
+      overall_score: result.scores.overallScore,
+      confidence: result.scores.confidence,
+      status,
+      qualification_reason: status === 'rejected' ? null : result.qualification.reason,
+      rejection_reason: status === 'rejected' ? result.qualification.reason : null,
+      matched_lead_id: matchedLeadId || candidate.matched_lead_id || null,
+      match_explanation: matchedLeadId ? 'همین وب‌سایت یا ایمیل قبلاً برای یک سرنخ ثبت شده است.' : candidate.match_explanation || null,
+    })
+    if (!promote) return
+    if (dryRun) {
+      summary.wouldPromote += 1
+      return
+    }
+    await replaceEvidence(client, candidate.id, result.evidence)
+    const leadId = await promoteCandidateRow(client, updated, result.evidence, { createdBy, sourceName: sourceNameById.get(candidate.source_id) || null })
+    summary.promoted += 1
+    if (email) summary.promotedWithEmail += 1
+    // Record the lookup on the lead so the sender's own lookup does not
+    // repeat it, and so the address shows where it was published.
+    const { error } = await client
+      .from('sales_leads')
+      .update({
+        email_lookup_status: result.emailStatus,
+        email_lookup_reason: result.emailReason,
+        email_lookup_at: new Date(now).toISOString(),
+        email_source_url: email ? result.emailSourceUrl : null,
+      })
+      .eq('id', leadId)
+    if (error) throw error
+  }
+
+  for (let i = 0; i < pending.length; i += SITE_VERIFY_CONCURRENCY) {
+    if (Date.now() >= deadline) {
+      summary.stoppedBy = 'time_budget'
+      break
+    }
+    if (summary.stoppedBy === 'promotion_budget') break
+    if (summary.checked >= MAX_SITE_CHECKS_PER_RUN) {
+      summary.stoppedBy = 'site_check_budget'
+      break
+    }
+    await Promise.all(
+      pending.slice(i, i + SITE_VERIFY_CONCURRENCY).map((candidate) =>
+        handle(candidate).catch(() => {
+          summary.errors += 1
+        }),
+      ),
+    )
+  }
+  return summary
+}
+
+// Leads (any source, including manually added ones) without an email whose
+// recorded website is not the company's own: one web search each for the
+// official site (leadSiteSearch.js). Each lead is searched once.
+export async function searchOfficialSitesForLeads(client, { deadline, maxSearches, search, fetchPage, now = Date.now() }) {
+  const summary = { searched: 0, found: 0, byStatus: {}, errors: 0 }
+  if (maxSearches <= 0) return summary
+  const { data: leads, error } = await client.from('sales_leads').select('*')
+  if (error) throw error
+  const takenEmails = new Set((leads || []).map((l) => normalizeEmail(l.email)).filter(Boolean))
+  const due = (leads || []).filter(
+    (l) =>
+      !normalizeEmail(l.email) &&
+      !l.do_not_contact &&
+      l.status !== 'converted' &&
+      l.status !== 'lost' &&
+      !l.official_site_search_at &&
+      LEAD_SITE_SEARCH_STATUSES.has(l.email_lookup_status),
+  )
+
+  for (const lead of due) {
+    if (summary.searched >= maxSearches || Date.now() >= deadline) break
+    let result
+    try {
+      result = await findLeadEmailViaSearch({ companyName: lead.company_name, search, ...(fetchPage ? { fetchPage } : {}) })
+    } catch {
+      summary.errors += 1
+      continue
+    }
+    if (result.status !== 'name_too_generic') summary.searched += 1
+    summary.byStatus[result.status] = (summary.byStatus[result.status] || 0) + 1
+    const email = normalizeEmail(result.email)
+    const patch = { official_site_search_at: new Date(now).toISOString() }
+    if (result.status === 'found' && email && !takenEmails.has(email)) {
+      takenEmails.add(email)
+      summary.found += 1
+      Object.assign(patch, {
+        email,
+        email_source_url: result.sourceUrl,
+        email_lookup_status: 'found',
+        email_lookup_reason: `ایمیل در وب‌سایت رسمی شرکت پیدا شد (وب‌سایت با جستجوی نام شرکت یافت شد: ${result.site})`,
+        email_lookup_at: new Date(now).toISOString(),
+      })
+    }
+    const { error: updateError } = await client.from('sales_leads').update(patch).eq('id', lead.id)
+    if (updateError) summary.errors += 1
+  }
+  return summary
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point - one discovery run across one or all enabled sources.
 // Idempotent-by-design: re-running never re-promotes an already-promoted
@@ -557,7 +784,15 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
 //     the fetched prospect_settings for this one invocation only (see the
 //     manualTest path in supabase/functions/prospect-discovery/index.ts,
 //     STEP 8's "very small safe discovery budget" server test trigger).
-export async function runDiscovery(client, { sourceId = null, runType = 'manual', uploadedRows = null, createdBy, dryRun = false, settingsOverride = null } = {}) {
+//   serverPhases - true only from the prospect-discovery Edge Function: after
+//     the sources, read pending candidates' own websites
+//     (verifyPendingCandidateSites) and search for leads' official sites
+//     (searchOfficialSitesForLeads). Never from the browser, which cannot
+//     fetch other sites. fetchPage/search override the network for checks.
+export async function runDiscovery(
+  client,
+  { sourceId = null, runType = 'manual', uploadedRows = null, createdBy, dryRun = false, settingsOverride = null, serverPhases = false, fetchPage = null, search = null } = {},
+) {
   const fetchedSettings = await fetchProspectSettings(client)
   const settings = settingsOverride ? { ...fetchedSettings, ...settingsOverride } : fetchedSettings
   const effectiveDryRun = Boolean(dryRun || settings.dry_run)
@@ -581,6 +816,15 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
   if (runType === 'scheduled') {
     const guard = await guardConcurrentScheduledRun(client)
     if (guard.skipped) return guard
+  }
+
+  // Scheduled runs repeat through the day (see the phase33 cron); once
+  // today's target of new public emails is reached they stop spending
+  // searches until tomorrow.
+  const dailyEmailTarget = settings.daily_new_email_target ?? DEFAULT_DAILY_NEW_EMAIL_TARGET
+  const emailsFoundBefore = serverPhases ? await countEmailsFoundToday(client) : null
+  if (runType === 'scheduled' && serverPhases && emailsFoundBefore >= dailyEmailTarget) {
+    return { skipped: true, reason: `هدف روزانه (${dailyEmailTarget} ایمیل جدید) امروز پر شده است.` }
   }
 
   const sources = await fetchRunnableSources(client, sourceId)
@@ -636,6 +880,12 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
   const runTimeoutMs = settings.run_timeout_ms ?? DEFAULT_RUN_TIMEOUT_MS
   const runStartedAt = Date.now()
   let timedOut = false
+  // With serverPhases, candidate processing stops at this point so the
+  // site step always gets the rest of the time budget.
+  const discoveryDeadline = runStartedAt + runTimeoutMs * (serverPhases ? DISCOVERY_PHASE_SHARE : 1)
+  let itemsNotProcessed = 0
+  let siteVerification = null
+  let leadSiteSearch = null
 
   try {
     for (const source of sources) {
@@ -645,8 +895,12 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
         continue
       }
 
-      const requestCost = estimateSourceRequestCost(source)
-      if (requestCost > externalRequestBudget.remaining) {
+      let requestCost = estimateSourceRequestCost(source)
+      // A rotating search source simply runs fewer queries when the budget
+      // is short; the cursor continues from wherever it stopped.
+      const rotating = source.source_type === 'search_result' && source.config?.rotate === true
+      if (rotating) requestCost = Math.min(requestCost, externalRequestBudget.remaining)
+      if ((rotating && requestCost < 1) || requestCost > externalRequestBudget.remaining) {
         sourceSummaries.push({ sourceId: source.id, name: source.name, skipped: true, reason: 'external_request_budget_exhausted' })
         continue
       }
@@ -655,7 +909,14 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
 
       try {
         const adapter = getSourceAdapter(source.source_type)
-        const rawItems = await adapter.discover(source, { rows: uploadedRows || [] })
+        const rawItems = await adapter.discover(source, { rows: uploadedRows || [], maxQueries: requestCost })
+        if (Number.isFinite(rawItems.nextCursor) && !effectiveDryRun) {
+          const { error: cursorError } = await client
+            .from('prospect_sources')
+            .update({ config: { ...(source.config || {}), rotationCursor: rawItems.nextCursor } })
+            .eq('id', source.id)
+          if (cursorError) throw cursorError
+        }
         const limit = source.config?.maxCandidatesPerRun ?? settings.max_candidates_per_source_per_run
         const limitedItems = rawItems.slice(0, limit)
         totals.candidatesFound += limitedItems.length
@@ -668,6 +929,10 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
         // the true total either way.
         const errorSamples = []
         for (const rawItem of limitedItems) {
+          if (Date.now() >= discoveryDeadline) {
+            itemsNotProcessed += 1
+            continue
+          }
           try {
             const promotedSoFar = effectiveDryRun ? totals.wouldPromoteCount : totals.candidatesPromoted
             const remainingPromotions = settings.max_promotions_per_run - promotedSoFar
@@ -714,6 +979,32 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
         totals.errorsCount += 1
         await client.from('prospect_sources').update({ last_run_at: new Date().toISOString(), last_error: sourceError.message }).eq('id', source.id)
         sourceSummaries.push({ sourceId: source.id, name: source.name, error: sourceError.message, stage: 'source_discover' })
+      }
+    }
+
+    if (serverPhases) {
+      const promotedSoFar = effectiveDryRun ? totals.wouldPromoteCount : totals.candidatesPromoted
+      siteVerification = await verifyPendingCandidateSites(client, {
+        settings,
+        deadline: runStartedAt + runTimeoutMs,
+        createdBy,
+        dryRun: effectiveDryRun,
+        promotions: { remaining: Math.max(0, settings.max_promotions_per_run - promotedSoFar) },
+        fetchPage,
+      })
+      totals.candidatesPromoted += siteVerification.promoted
+      totals.wouldPromoteCount += siteVerification.wouldPromote
+      totals.errorsCount += siteVerification.errors
+      if (!effectiveDryRun) {
+        const searches = Math.min(MAX_LEAD_SITE_SEARCHES_PER_RUN, externalRequestBudget.remaining)
+        leadSiteSearch = await searchOfficialSitesForLeads(client, {
+          deadline: runStartedAt + runTimeoutMs,
+          maxSearches: searches,
+          search: search || ((query) => searchWeb(query)),
+          fetchPage,
+        })
+        externalRequestBudget.remaining -= leadSiteSearch.searched
+        externalRequestBudget.used += leadSiteSearch.searched
       }
     }
   } catch (fatalError) {
@@ -774,6 +1065,12 @@ export async function runDiscovery(client, { sourceId = null, runType = 'manual'
         externalRequestsUsed: externalRequestBudget.used,
         externalRequestBudget: settings.max_external_requests_per_run ?? DEFAULT_MAX_EXTERNAL_REQUESTS_PER_RUN,
         identityVerificationFetchesUsed: MAX_IDENTITY_VERIFICATION_FETCHES_PER_RUN - identityBudget.remaining,
+        itemsNotProcessed,
+        siteVerification,
+        leadSiteSearch,
+        dailyEmailTarget,
+        emailsFoundTodayBefore: emailsFoundBefore,
+        emailsFoundTodayAfter: serverPhases && !effectiveDryRun ? await countEmailsFoundToday(client) : null,
       },
     })
     .eq('id', runRow.id)
@@ -1359,7 +1656,7 @@ export async function ensureDefaultSources(client) {
     name: SERPER_SOURCE_NAME,
     sourceType: 'search_result',
     enabled: true,
-    config: { queryTemplates: DEFAULT_SERPER_QUERY_TEMPLATES, gl: 'ir', hl: 'fa', resultsPerQuery: 10 },
+    config: { queryTemplates: DEFAULT_SERPER_QUERY_TEMPLATES, gl: 'ir', hl: 'fa', resultsPerQuery: 10, rotate: true, queriesPerRun: DEFAULT_ROTATING_QUERIES_PER_RUN, maxPages: 3 },
   })
   const osm = await ensureSourceExists(client, {
     name: OSM_SOURCE_NAME,
