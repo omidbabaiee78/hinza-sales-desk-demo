@@ -22,7 +22,7 @@ import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, searchWeb } 
 import { verifyCandidateSite, snippetSaysNotCompany } from './siteVerification.js'
 import { findLeadEmailViaSearch, LEAD_SITE_SEARCH_STATUSES } from './leadSiteSearch.js'
 import { tehranDateKey } from '../utils/leadFollowUp.js'
-import { enrichLeadContacts, contactPatchFor, takenContacts } from './leadContactEnrichment.js'
+import { enrichLeadContacts, contactPatchFor, contactSourcesFor, takenContacts } from './leadContactEnrichment.js'
 import { normalizeMobile } from '../outreach/contactPoints.js'
 
 // ---------------------------------------------------------------------------
@@ -710,6 +710,7 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
         phone_source_url: result.phoneSourceUrl,
         contact_lookup_status: email || result.phoneSourceUrl ? 'found' : result.emailStatus,
         contact_lookup_at: new Date(now).toISOString(),
+        contact_sources: contactSourcesFor(updated, { email: result.email, sourceUrl: result.emailSourceUrl, mobiles: result.mobiles, landlines: result.landlines }),
       })
       .eq('id', leadId)
     if (error) throw error
@@ -771,7 +772,7 @@ export async function searchOfficialSitesForLeads(client, { deadline, maxSearche
     // enrichment; the phones the official site publishes are kept too.
     const found = result.site ? contactPatchFor(lead, result, taken, new Date(now)) : null
     if (found) {
-      Object.assign(patch, found.patch, { contact_lookup_status: 'found', contact_lookup_at: new Date(now).toISOString() })
+      Object.assign(patch, found.patch, { contact_lookup_status: found.added.length > 0 ? 'found' : 'confirmed', contact_lookup_at: new Date(now).toISOString() })
       if (found.added.includes('email')) {
         summary.found += 1
         patch.email_lookup_reason = `ایمیل در وب‌سایت رسمی شرکت پیدا شد (وب‌سایت با جستجوی نام شرکت یافت شد: ${result.site})`

@@ -3509,6 +3509,7 @@ await check('Phase 35: site step also takes the numbers the candidate\'s site pu
   assert.equal(lead.phone, '02188001122')
   assert.equal(lead.phone_source_url, 'https://sample-plast.ir/')
   assert.equal(lead.contact_lookup_status, 'found')
+  assert.ok(lead.contact_sources.some((c) => c.field === 'mobile' && c.value === '09121234567' && c.sourceUrl === 'https://sample-plast.ir/'))
 })
 
 await check('Phase 35: a candidate whose site mobile is already on a lead is a duplicate, not a second lead', async () => {

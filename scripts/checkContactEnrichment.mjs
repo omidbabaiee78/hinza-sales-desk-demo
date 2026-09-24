@@ -122,6 +122,35 @@ await check('patch: only empty fields are filled, each with its source page', ()
   assert.deepEqual(added, ['email', 'mobile'])
 })
 
+await check('sources: each contact keeps the page that publishes it - two numbers from two pages keep two sources', () => {
+  const l = lead()
+  const result = {
+    mobiles: [
+      { number: '09199526911', sourceUrl: 'https://rashaplast.ir/' },
+      { number: '09192512972', sourceUrl: 'https://rashaplast.ir/contact-us/' },
+    ],
+    landlines: [],
+  }
+  const { patch } = contactPatchFor(l, result, takenContacts([l]))
+  assert.deepEqual(patch.contact_sources, [
+    { field: 'mobile', value: '09199526911', sourceUrl: 'https://rashaplast.ir/' },
+    { field: 'mobile', value: '09192512972', sourceUrl: 'https://rashaplast.ir/contact-us/' },
+  ])
+})
+
+await check('sources: contacts the lead already had are linked to the page that confirms them, without changing them', () => {
+  const l = lead({ email: 'info@acme.ir', mobile: '0912 123 4567', phone: '021-88880000' })
+  const result = { email: 'info@acme.ir', sourceUrl: 'https://acme.ir/', mobiles: [{ number: '09121234567', sourceUrl: 'https://acme.ir/contact/' }], landlines: [{ number: '02199990000', sourceUrl: 'https://acme.ir/contact/' }] }
+  const found = contactPatchFor(l, result, takenContacts([l]))
+  assert.deepEqual(found.added, [])
+  assert.equal('mobile' in found.patch || 'email' in found.patch || 'phone' in found.patch, false)
+  assert.deepEqual(found.patch.contact_sources, [
+    { field: 'email', value: 'info@acme.ir', sourceUrl: 'https://acme.ir/' },
+    { field: 'mobile', value: '0912 123 4567', sourceUrl: 'https://acme.ir/contact/' },
+  ], 'a landline the site does not publish gets no source')
+  assert.equal(contactPatchFor({ ...l, contact_sources: found.patch.contact_sources }, result, takenContacts([l])), null, 'nothing new the second time')
+})
+
 await check('patch: a contact already on another lead is never attached', () => {
   const other = lead({ email: 'info@acme.ir', mobile: '0912 123 4567' })
   const l = lead()
@@ -132,14 +161,16 @@ await check('patch: a contact already on another lead is never attached', () => 
 await check('due: only leads missing email or mobile, with a website that can be their own, not rechecked for 30 days', () => {
   const now = new Date('2026-09-24T12:00:00Z')
   const complete = lead({ email: 'a@a.ir', mobile: '09121112233', website: 'https://a.ir' })
+  const completeUnsourced = lead({ email: 'b@b.ir', mobile: '09121112244', website: 'https://bb.ir' })
+  complete.contact_sources = [{ field: 'email', value: 'a@a.ir', sourceUrl: 'https://a.ir/' }]
   const pdf = lead({ website: 'https://dhci.org/wp-content/uploads/2025/07/ozv.pdf' })
   const optedOut = lead({ website: 'https://b.ir', do_not_contact: true })
   const fresh = lead({ website: 'https://c.ir' })
   const recent = lead({ website: 'https://d.ir', contact_lookup_at: '2026-09-20T00:00:00Z', contact_lookup_status: 'no_email_on_site' })
   const failedYesterday = lead({ website: 'https://e.ir', contact_lookup_at: '2026-09-23T00:00:00Z', contact_lookup_status: 'fetch_failed' })
   const viaCandidate = lead({ tags: ['prospecting'] })
-  const due = leadsDueForContactEnrichment([complete, pdf, optedOut, fresh, recent, failedYesterday, viaCandidate], new Map([[viaCandidate.id, { website: 'https://f.ir/p' }]]), now)
-  assert.deepEqual(due.map((l) => l.id).sort(), [fresh.id, failedYesterday.id, viaCandidate.id].sort())
+  const due = leadsDueForContactEnrichment([complete, completeUnsourced, pdf, optedOut, fresh, recent, failedYesterday, viaCandidate], new Map([[viaCandidate.id, { website: 'https://f.ir/p' }]]), now)
+  assert.deepEqual(due.map((l) => l.id).sort(), [completeUnsourced.id, fresh.id, failedYesterday.id, viaCandidate.id].sort(), 'a complete lead is read once to record its sources')
 })
 
 // --- Enrichment runs (manual, imported, discovered) ----------------------------

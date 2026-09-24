@@ -93,17 +93,50 @@ export function contactPatchFor(lead, result, taken, now = new Date()) {
     }
   }
   if (phoneSource) patch.phone_source_url = phoneSource
-  return added.length > 0 ? { patch, added } : null
+  const sources = contactSourcesFor({ ...lead, ...patch }, result)
+  if (sources) patch.contact_sources = sources
+  return added.length > 0 || sources ? { patch, added } : null
+}
+
+function sameSource(a, b) {
+  return a.field === b.field && a.value === b.value && a.sourceUrl === b.sourceUrl
+}
+
+// Per contact on the lead (after the patch): the page of its own website
+// that publishes it - for added values AND for values the lead already had
+// that the site confirms. -> the merged contact_sources list, or null when
+// nothing changed. [{ field: 'email'|'mobile'|'phone', value, sourceUrl }]
+export function contactSourcesFor(lead, result) {
+  const found = []
+  const email = normalizeEmail(lead.email)
+  if (email && normalizeEmail(result.email) === email && result.sourceUrl) found.push({ field: 'email', value: email, sourceUrl: result.sourceUrl })
+  const onSite = new Map([...(result.mobiles || []).map((m) => [normalizeMobile(m.number), m.sourceUrl])])
+  for (const raw of splitContactDisplay(lead.mobile)) {
+    const key = normalizeMobile(raw)
+    if (key && onSite.has(key)) found.push({ field: 'mobile', value: raw, sourceUrl: onSite.get(key) })
+  }
+  const landlinesOnSite = new Map((result.landlines || []).map((l) => [l.number, l.sourceUrl]))
+  for (const raw of splitContactDisplay(lead.phone)) {
+    const key = landlineDigits(raw)
+    if (key && landlinesOnSite.has(key)) found.push({ field: 'phone', value: raw, sourceUrl: landlinesOnSite.get(key) })
+  }
+  const existing = Array.isArray(lead.contact_sources) ? lead.contact_sources : []
+  const merged = [...existing]
+  for (const s of found) if (!merged.some((e) => sameSource(e, s))) merged.push(s)
+  return merged.length > existing.length ? merged : null
 }
 
 // Which leads the site-based enrichment should read now: missing an email
-// or a mobile, reachable through a website that could be the company's own,
+// or a mobile (or never source-checked), reachable through a website that could be the company's own,
 // and not checked in the last 30 days (a site that failed to load: after a
 // day). Leads with nothing at all come first, then the newest.
 export function leadsDueForContactEnrichment(leads, candidateByLead = new Map(), now = new Date()) {
   const due = leads.filter((lead) => {
     if (lead.do_not_contact || lead.status === 'converted' || lead.status === 'lost') return false
-    if (normalizeEmail(lead.email) && firstMobile(lead)) return false
+    // Complete leads are read once too, to record where their contacts are
+    // published (contact_sources); after that, only incomplete ones.
+    const complete = normalizeEmail(lead.email) && firstMobile(lead)
+    if (complete && Array.isArray(lead.contact_sources) && lead.contact_sources.length > 0) return false
     const candidate = candidateByLead.get(lead.id)
     if (!resolveOfficialWebsite([lead.website, candidate?.website]).ok) return false
     if (!lead.contact_lookup_at) return true
@@ -118,7 +151,7 @@ export function leadsDueForContactEnrichment(leads, candidateByLead = new Map(),
 // Reads due leads' websites and fills in what they publish. Bounded by
 // maxLeads and the deadline. -> summary counts.
 export async function enrichLeadContacts(client, { deadline, maxLeads, fetchPage = null, concurrency = 4, now = new Date() }) {
-  const summary = { due: 0, checked: 0, updated: 0, emailsAdded: 0, mobilesAdded: 0, phonesAdded: 0, byStatus: {}, errors: 0 }
+  const summary = { due: 0, checked: 0, updated: 0, emailsAdded: 0, mobilesAdded: 0, phonesAdded: 0, sourcesRecorded: 0, byStatus: {}, errors: 0 }
   if (maxLeads <= 0) return summary
   const [leadsRes, candidatesRes] = await Promise.all([client.from('sales_leads').select('*'), client.from('prospect_candidates').select('promoted_lead_id, website')])
   if (leadsRes.error) throw leadsRes.error
@@ -140,12 +173,14 @@ export async function enrichLeadContacts(client, { deadline, maxLeads, fetchPage
     })
     summary.checked += 1
     const found = contactPatchFor(lead, result, taken, now)
-    const status = found ? 'found' : result.status === 'found' ? 'nothing_new' : result.status
+    const added = found?.added || []
+    const status = added.length > 0 ? 'found' : found ? 'confirmed' : result.status === 'found' ? 'nothing_new' : result.status
     summary.byStatus[status] = (summary.byStatus[status] || 0) + 1
     const patch = { ...(found?.patch || {}), contact_lookup_status: status, contact_lookup_at: now.toISOString() }
     const { error } = await client.from('sales_leads').update(patch).eq('id', lead.id)
     if (error) throw error
-    if (found) {
+    if (found?.patch.contact_sources) summary.sourcesRecorded += 1
+    if (added.length > 0) {
       summary.updated += 1
       if (found.added.includes('email')) summary.emailsAdded += 1
       if (found.added.includes('mobile')) summary.mobilesAdded += 1
