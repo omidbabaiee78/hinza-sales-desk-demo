@@ -156,7 +156,9 @@ const STANDALONE_DIRECTORY_PHRASES = ['بانک اطلاعات']
 // ambiguous without it, but THIS phrase's own "تولید کننده" half would
 // always satisfy that guard and defeat it.
 const UNGUARDED_DIRECTORY_PHRASES = ['شرکت های تولید کننده']
-const STANDALONE_MARKETPLACE_PHRASES = ['قیمت و خرید', 'قیمت و فروش', 'خرید و فروش']
+// «نمایشگاه و بازار مجازی ایران» (namabazaar.com) - an online B2B market,
+// not a company.
+const STANDALONE_MARKETPLACE_PHRASES = ['قیمت و خرید', 'قیمت و فروش', 'خرید و فروش', 'بازار مجازی', 'نمایشگاه مجازی']
 const STANDALONE_ARTICLE_PHRASES = ['مقاله']
 
 // Section K - retail/commerce wording ("قیمت و خرید" etc.) must not brand a

@@ -8,7 +8,7 @@ import { runAutoEmailCycle } from '../src/outreach/autoEmailPipeline.js'
 import { EMAIL_OPT_OUT_FOOTER, evaluateSendGate } from '../src/outreach/sendGate.js'
 import { attemptSend } from '../src/outreach/sendPipeline.js'
 import { applyResendEvent, signResendPayload, verifyResendSignature } from '../src/outreach/resendWebhook.js'
-import { lookupCompanyEmail, pickCompanyEmail } from '../src/outreach/emailDiscovery.js'
+import { lookupCompanyEmail, pickCompanyEmail, extractEmails, LOOKUP_LIMITS } from '../src/outreach/emailDiscovery.js'
 import { tehranDateKey } from '../src/utils/leadFollowUp.js'
 
 let passed = 0
@@ -765,6 +765,37 @@ await check('webhook: an event for an address never auto-emailed is recorded so 
     await run(client)
     assert.equal(sent.length, 0)
   })
+})
+
+// Real causes of "no email" seen on production sites (2026-09-24).
+function cloudflareEncode(email, key = 0x42) {
+  return key.toString(16).padStart(2, '0') + [...email].map((c) => (c.charCodeAt(0) ^ key).toString(16).padStart(2, '0')).join('')
+}
+
+await check('lookup: bracket-obfuscated and Cloudflare-protected addresses are decoded exactly', () => {
+  assert.deepEqual(extractEmails('<p>ایمیل: info[at]pooshanplastic.com</p>'), ['info@pooshanplastic.com'])
+  assert.deepEqual(extractEmails('sales (at) acme (dot) ir'), ['sales@acme.ir'])
+  assert.deepEqual(extractEmails(`<a href="/cdn-cgi/l/email-protection" data-cfemail="${cloudflareEncode('info@iranavandfar.com')}">[email&#160;protected]</a>`), ['info@iranavandfar.com'])
+  assert.deepEqual(extractEmails('Failure at Presize'), [], 'a bare "at" in text is not an address')
+})
+
+await check('lookup: an address in a long page footer is still read (pages larger than the old 300 KB cap)', async () => {
+  const filler = 'x'.repeat(600000)
+  const { fetchPage } = fakeSite({ 'https://acme.ir/': `<title>آکمه</title><style>${filler}</style><footer>info@acme.ir</footer>` })
+  const result = await lookupCompanyEmail({ websites: ['https://acme.ir/'], companyName: 'x', discoveredOn: 'https://acme.ir/', fetchPage })
+  assert.equal(result.email, 'info@acme.ir')
+  assert.ok(LOOKUP_LIMITS.maxBytes >= 1000000)
+})
+
+await check('lookup: follows a «ارتباط با ما» link and prefers contact pages over about sub-pages', async () => {
+  const { fetchPage, fetched } = fakeSite({
+    'https://acme.ir/':
+      '<title>آکمه</title><a href="/about/history/">درباره ما</a><a href="/about/team/">درباره تیم</a><a href="/about/quality/">درباره کیفیت</a><a href="/reach/">ارتباط با ما</a>',
+    'https://acme.ir/reach/': 'sales@acme.ir',
+  })
+  const result = await lookupCompanyEmail({ websites: ['https://acme.ir/'], companyName: 'x', discoveredOn: 'https://acme.ir/', fetchPage })
+  assert.equal(result.email, 'sales@acme.ir')
+  assert.equal(fetched[1], 'https://acme.ir/reach/')
 })
 
 console.log(`\n${passed} check(s) passed.`)

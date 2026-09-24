@@ -25,9 +25,12 @@ import {
   runComprehensiveAudit,
   qualifyWithIdentityVerification,
   promoteEligibleCandidates,
+  verifyPendingCandidateSites,
+  searchOfficialSitesForLeads,
 } from '../src/prospecting/discoveryPipeline.js'
+import { findLeadEmailViaSearch } from '../src/prospecting/leadSiteSearch.js'
 import { osmOverpassAdapter, __testing as osmOverpassTesting } from '../src/prospecting/sourceAdapters/osmOverpass.js'
-import { serperSearchAdapter, DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES } from '../src/prospecting/sourceAdapters/serperSearch.js'
+import { serperSearchAdapter, DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, buildQueryPlan, nextRotationSlice } from '../src/prospecting/sourceAdapters/serperSearch.js'
 
 let passed = 0
 async function check(name, fn) {
@@ -3153,6 +3156,331 @@ await check('Phase 24 fix: a dry-run "would-promote" candidate is still correctl
   assert.equal(run.candidates_promoted, 0, 'dry-run must never flip a candidate to promoted')
   assert.equal(run.summary.statusCounts.qualified, 1, 'a would-promote candidate stays counted as qualified in dry-run')
   assert.equal(run.summary.statusCounts.promoted ?? 0, 0)
+})
+
+// ---------------------------------------------------------------------------
+// Phase 33 - query rotation, reading candidates' own websites, lead
+// official-site search, daily email target.
+// ---------------------------------------------------------------------------
+
+function sitePage({ title = '', siteName = null, description = '', body = '' } = {}) {
+  return {
+    ok: true,
+    text: `<html><head><title>${title}</title>${siteName ? `<meta property="og:site_name" content="${siteName}">` : ''}<meta name="description" content="${description}"></head><body>${body}</body></html>`,
+  }
+}
+
+function fakeSite(pages) {
+  const calls = []
+  const fetchPage = async (url) => {
+    calls.push(url)
+    return pages[url] || { ok: false, reason: 'پاسخ 404' }
+  }
+  return { fetchPage, calls }
+}
+
+function pendingCandidate(client, overrides = {}) {
+  const row = {
+    id: `cand-${client.tables.prospect_candidates.length + 1}`,
+    status: 'manual_review',
+    canonical_name: 'فیلم پلی اتیلن',
+    raw_name: 'فیلم پلی اتیلن',
+    normalized_name_key: normalizedNameKey('فیلم پلی اتیلن'),
+    website: 'https://sample-plast.ir/film/',
+    domain: 'sample-plast.ir',
+    source_url: 'https://sample-plast.ir/film/',
+    business_description: 'فیلم پلی اتیلن سه لایه',
+    email: null,
+    first_seen_at: '2026-09-24T05:00:00Z',
+    ...overrides,
+  }
+  client.tables.prospect_candidates.push(row)
+  return row
+}
+
+const MANUFACTURER_HOME = sitePage({
+  title: 'صنایع پلاستیک نمونه | تولید کننده فیلم پلی اتیلن',
+  siteName: 'صنایع پلاستیک نمونه',
+  description: 'شرکت صنایع پلاستیک نمونه تولید کننده فیلم پلی اتیلن و نایلون کشاورزی با کارخانه در شهرک صنعتی',
+  body: '<footer>ایمیل: info[at]sample-plast.ir</footer>',
+})
+
+await check('Phase 33: buildQueryPlan walks every template x location on page 1 before page 2', () => {
+  const plan = buildQueryPlan({ queryTemplates: ['الف', 'ب'], locations: ['', 'تهران'], maxPages: 2 })
+  assert.deepEqual(plan.map((p) => `${p.q}#${p.page}`), ['الف#1', 'ب#1', 'الف تهران#1', 'ب تهران#1', 'الف#2', 'ب#2', 'الف تهران#2', 'ب تهران#2'])
+})
+
+await check('Phase 33: nextRotationSlice continues from the cursor and wraps around', () => {
+  const plan = [1, 2, 3, 4, 5].map((n) => ({ q: String(n), page: 1 }))
+  const a = nextRotationSlice(plan, 3, 3)
+  assert.deepEqual(a.queries.map((q) => q.q), ['4', '5', '1'])
+  assert.equal(a.nextCursor, 1)
+  assert.equal(nextRotationSlice(plan, 99, 2).queries[0].q, '5', 'a stale cursor past the end wraps instead of failing')
+})
+
+await check('Phase 33: a rotating search source sends the page number and runDiscovery saves the next cursor', async () => {
+  const client = makeFakeClient()
+  const source = (
+    await client
+      .from('prospect_sources')
+      .insert({ name: 'serper rotating', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 3, queryTemplates: ['الف', 'ب'], locations: [''], maxPages: 3, rotationCursor: 1 } })
+      .select()
+      .single()
+  ).data
+  const bodies = []
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    mockFetch(async (url, options) => {
+      bodies.push(JSON.parse(options.body))
+      return serperResponse([])
+    })
+    try {
+      await runDiscovery(client, { sourceId: source.id, runType: 'manual' })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.deepEqual(bodies.map((b) => `${b.q}#${b.page || 1}`), ['ب#1', 'الف#2', 'ب#2'])
+  assert.equal(client.tables.prospect_sources.find((s) => s.id === source.id).config.rotationCursor, 4)
+})
+
+await check('Phase 33: a dry run never moves the rotation cursor', async () => {
+  const client = makeFakeClient()
+  const source = (
+    await client
+      .from('prospect_sources')
+      .insert({ name: 'serper rotating dry', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 2, queryTemplates: ['الف'], locations: [''], maxPages: 5, rotationCursor: 0 } })
+      .select()
+      .single()
+  ).data
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    mockFetch(async () => serperResponse([]))
+    try {
+      await runDiscovery(client, { sourceId: source.id, runType: 'manual', dryRun: true })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.equal(client.tables.prospect_sources.find((s) => s.id === source.id).config.rotationCursor, 0)
+})
+
+await check('Phase 33: a rotating source runs fewer queries when the external-request budget is short', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].max_external_requests_per_run = 2
+  const source = (
+    await client
+      .from('prospect_sources')
+      .insert({ name: 'serper budget', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 10, queryTemplates: ['الف'], locations: [''], maxPages: 9 } })
+      .select()
+      .single()
+  ).data
+  let calls = 0
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    mockFetch(async () => {
+      calls += 1
+      return serperResponse([])
+    })
+    try {
+      await runDiscovery(client, { sourceId: source.id, runType: 'manual' })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.equal(calls, 2)
+})
+
+await check('Phase 33: site step promotes a manufacturer the snippet left in manual_review, named and emailed from its own site', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(summary.promoted, 1)
+  assert.equal(summary.promotedWithEmail, 1)
+  const lead = client.tables.sales_leads[0]
+  assert.equal(lead.company_name, 'صنایع پلاستیک نمونه', 'the lead is named after the company, not the product page title')
+  assert.equal(lead.email, 'info@sample-plast.ir', 'the obfuscated address published on the site')
+  assert.equal(lead.email_lookup_status, 'found')
+  assert.equal(lead.email_source_url, 'https://sample-plast.ir/')
+  const cand = client.tables.prospect_candidates[0]
+  assert.equal(cand.status, 'promoted')
+  assert.equal(cand.site_check_status, 'email_found')
+  assert.ok(cand.site_checked_at)
+})
+
+await check('Phase 33: site step never fetches a page the snippet already shows is an article/directory', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { raw_name: 'بهترین تولیدکنندگان فیلم پلی اتیلن', canonical_name: 'sample', business_description: 'لیست بهترین کارخانه های تولید فیلم' })
+  const { fetchPage, calls } = fakeSite({})
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(calls.length, 0)
+  assert.equal(summary.byStatus.not_company, 1)
+  assert.equal(client.tables.prospect_candidates[0].site_check_status, 'not_company')
+  assert.equal(client.tables.sales_leads.length, 0)
+})
+
+await check('Phase 33: site step does not promote a site that turns out to be a marketplace', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({
+    'https://sample-plast.ir/': sitePage({ title: 'نما بازار , نمایشگاه و بازار مجازی ایران', description: 'نمایشگاه و بازار مجازی ایران', body: 'info@sample-plast.ir' }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 0)
+  assert.notEqual(client.tables.prospect_candidates[0].status, 'promoted')
+})
+
+await check('Phase 33: site step does not promote a packaging-machinery maker', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({
+    'https://sample-plast.ir/': sitePage({
+      title: 'ایرانو صنعت | تولیدکننده تخصصی دستگاه‌های بسته‌بندی',
+      siteName: 'ایرانو صنعت',
+      description: 'تولیدکننده دستگاه‌های بسته‌بندی شیرینگ و استرچ پالت',
+      body: 'info@sample-plast.ir',
+    }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 0)
+})
+
+await check('Phase 33: site step marks a candidate whose email or site already belongs to a lead as a duplicate', async () => {
+  const client = makeFakeClient()
+  client.tables.sales_leads.push({ id: 'lead-existing', company_name: 'قدیمی', email: 'INFO@sample-plast.ir', website: null })
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(summary.duplicates, 1)
+  assert.equal(client.tables.sales_leads.length, 1, 'no second lead for the same address')
+  assert.equal(client.tables.prospect_candidates[0].status, 'duplicate')
+  assert.equal(client.tables.prospect_candidates[0].matched_lead_id, 'lead-existing')
+})
+
+await check('Phase 33: site step in dry-run reads and counts but writes nothing', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, dryRun: true, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(summary.wouldPromote, 1)
+  assert.equal(client.tables.sales_leads.length, 0)
+  assert.equal(client.tables.prospect_candidates[0].site_checked_at, undefined)
+  assert.equal(client.tables.prospect_candidates[0].status, 'manual_review')
+})
+
+await check('Phase 33: site step leaves candidates pending once the promotion budget is used up', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { first_seen_at: '2026-09-24T06:00:00Z' })
+  pendingCandidate(client, { website: 'https://second-plast.ir/', domain: 'second-plast.ir', first_seen_at: '2026-09-24T05:00:00Z' })
+  const second = sitePage({ title: 'پلاستیک دوم', siteName: 'پلاستیک دوم', description: 'شرکت پلاستیک دوم تولید کننده فیلم پلی اتیلن با کارخانه', body: 'sales@second-plast.ir' })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME, 'https://second-plast.ir/': second })
+  const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 1 }, fetchPage })
+  assert.equal(summary.promoted, 1)
+  assert.equal(summary.stoppedBy, 'promotion_budget')
+  const unpromoted = client.tables.prospect_candidates.find((c) => c.status !== 'promoted')
+  assert.equal(unpromoted.site_checked_at, undefined, 'the one over budget is checked again next run, not lost')
+})
+
+await check('Phase 33: site step retries a site that failed to load only after a few days', async () => {
+  const client = makeFakeClient()
+  const now = Date.parse('2026-09-24T10:00:00Z')
+  pendingCandidate(client, { site_checked_at: '2026-09-23T10:00:00Z', site_check_status: 'fetch_failed' })
+  const { fetchPage, calls } = fakeSite({})
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage, now })
+  assert.equal(calls.length, 0)
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage, now: now + 3 * 86400000 })
+  assert.ok(calls.length > 0)
+})
+
+await check('Phase 33: lead official-site search accepts a site only when its own name markers contain every distinctive word', async () => {
+  const search = async () => [
+    { title: 'شیمی لیا فردوس - اخبار', link: 'https://news-site.ir/x', snippet: 'مقاله' },
+    { title: 'فردوس شیمی لیا', link: 'https://ferdows-lia.ir/', snippet: 'تولید مواد شوینده' },
+  ]
+  const { fetchPage } = fakeSite({
+    'https://news-site.ir/': sitePage({ title: 'خبرگزاری', siteName: 'خبرگزاری' }),
+    'https://ferdows-lia.ir/': sitePage({ title: 'فردوس شیمی لیا', siteName: 'فردوس شیمی لیا', body: 'info@ferdows-lia.ir' }),
+  })
+  const result = await findLeadEmailViaSearch({ companyName: 'فردوس شیمی لیا', search, fetchPage })
+  assert.equal(result.status, 'found')
+  assert.equal(result.email, 'info@ferdows-lia.ir')
+  assert.equal(result.site, 'https://ferdows-lia.ir/')
+
+  const partial = fakeSite({ 'https://ferdows-lia.ir/': sitePage({ title: 'فردوس ساختمان', siteName: 'فردوس ساختمان', body: 'info@ferdows-lia.ir' }) })
+  const miss = await findLeadEmailViaSearch({ companyName: 'فردوس شیمی لیا', search: async () => [{ title: 'x', link: 'https://ferdows-lia.ir/' }], fetchPage: partial.fetchPage })
+  assert.equal(miss.status, 'official_site_not_found', 'a site sharing only one word of the name is another company')
+})
+
+await check('Phase 33: lead official-site search never searches a one-word name', async () => {
+  let searched = false
+  const result = await findLeadEmailViaSearch({
+    companyName: 'زیباوش',
+    search: async () => {
+      searched = true
+      return []
+    },
+  })
+  assert.equal(result.status, 'name_too_generic')
+  assert.equal(searched, false)
+})
+
+await check('Phase 33: searchOfficialSitesForLeads fills the email once, never over another lead\'s address', async () => {
+  const client = makeFakeClient()
+  client.tables.sales_leads.push(
+    { id: 'l1', company_name: 'فردوس شیمی لیا', email: null, status: 'new', email_lookup_status: 'not_official_website', website: 'https://dhci.org/x.pdf' },
+    { id: 'l2', company_name: 'آریا شیمی رایکا', email: null, status: 'new', email_lookup_status: 'not_official_website' },
+    { id: 'l3', company_name: 'قبلی', email: 'info@aria-raika.ir', status: 'new' },
+    { id: 'l4', company_name: 'سپیدار شیمی مهرا', email: null, status: 'new', do_not_contact: true, email_lookup_status: 'identity_mismatch' },
+  )
+  const search = async (q) => (q.includes('فردوس') ? [{ title: 'فردوس شیمی لیا', link: 'https://ferdows-lia.ir/' }] : [{ title: 'آریا شیمی رایکا', link: 'https://aria-raika.ir/' }])
+  const { fetchPage } = fakeSite({
+    'https://ferdows-lia.ir/': sitePage({ title: 'فردوس شیمی لیا', siteName: 'فردوس شیمی لیا', body: 'info@ferdows-lia.ir' }),
+    'https://aria-raika.ir/': sitePage({ title: 'آریا شیمی رایکا', siteName: 'آریا شیمی رایکا', body: 'info@aria-raika.ir' }),
+  })
+  const summary = await searchOfficialSitesForLeads(client, { deadline: Date.now() + 60000, maxSearches: 4, search, fetchPage })
+  assert.equal(summary.found, 1)
+  const [l1, l2, , l4] = client.tables.sales_leads
+  assert.equal(l1.email, 'info@ferdows-lia.ir')
+  assert.equal(l1.website, 'https://dhci.org/x.pdf', 'the recorded website is left as the admin entered it')
+  assert.equal(l2.email, null, 'an address already used by another lead is not attached')
+  assert.ok(l2.official_site_search_at)
+  assert.equal(l4.official_site_search_at, undefined, 'do-not-contact leads are never searched')
+  const again = await searchOfficialSitesForLeads(client, { deadline: Date.now() + 60000, maxSearches: 4, search, fetchPage })
+  assert.equal(again.searched, 0, 'each lead is searched once')
+})
+
+await check('Phase 33: a scheduled server run skips once today\'s new-email target is reached', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_settings[0].daily_new_email_target = 2
+  const nowIso = new Date().toISOString()
+  client.tables.sales_leads.push({ id: 'a', email_lookup_status: 'found', email_lookup_at: nowIso }, { id: 'b', email_lookup_status: 'found', email_lookup_at: nowIso })
+  const result = await runDiscovery(client, { runType: 'scheduled', serverPhases: true, fetchPage: async () => ({ ok: false }), search: async () => [] })
+  assert.equal(result.skipped, true)
+  assert.equal(client.tables.prospect_discovery_runs.length, 0)
+})
+
+await check('Phase 33: a server run discovers, then reads the new candidate\'s site and promotes it with its email', async () => {
+  const client = makeFakeClient()
+  const source = (
+    await client
+      .from('prospect_sources')
+      .insert({ name: 'serper e2e', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 1, queryTemplates: ['فیلم'], locations: [''] } })
+      .select()
+      .single()
+  ).data
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  let run
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    mockFetch(async () => serperResponse([{ title: 'فیلم پلی اتیلن', link: 'https://sample-plast.ir/film/', snippet: 'فیلم پلی اتیلن سه لایه' }]))
+    try {
+      run = await runDiscovery(client, { sourceId: source.id, runType: 'manual', serverPhases: true, fetchPage, search: async () => [] })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.equal(run.candidates_created, 1)
+  assert.equal(run.summary.siteVerification.promoted, 1)
+  assert.equal(run.candidates_promoted, 1)
+  assert.equal(client.tables.sales_leads[0].email, 'info@sample-plast.ir')
+  assert.equal(run.summary.emailsFoundTodayAfter, 1)
 })
 
 console.log(`\n${passed} check(s) passed.`)

@@ -14,7 +14,7 @@ import { isPromotableIdentity } from './identityResolution.js'
 // prepared, not-yet-applied migration that adds it). Once that migration
 // is applied, reEvaluateCandidate()/processCandidate() can start stamping
 // this value on every write.
-export const QUALIFICATION_VERSION = 6
+export const QUALIFICATION_VERSION = 7
 
 // ---------------------------------------------------------------------------
 // Scores + evidence -> a candidate status decision, plus whether it is
