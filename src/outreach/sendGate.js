@@ -115,6 +115,10 @@ export function evaluateSendGate({
   // (see classifySendAttempts) - delivery mode can't be determined, so it
   // blocks like a duplicate, with its own reason, until reconciled.
   ambiguousPriorDelivery = false,
+  // 'hard_bounce' | 'complaint' | null - from email_outreach_recipients,
+  // set by the Resend webhook. Blocks a REAL send to that address (a test
+  // send goes to the test inbox, not to it).
+  emailSuppression = null,
   testMode,
   // { whatsapp: 'E.164 test number' | null, email: 'test@address' | null } -
   // read from Edge Function secrets by the caller, never from settings/DB.
@@ -209,6 +213,14 @@ export function evaluateSendGate({
 
   if (ambiguousPriorDelivery) {
     reasons.push(AMBIGUOUS_PRIOR_DELIVERY_REASON)
+  }
+
+  if (emailSuppression && channel === 'email' && !effectiveTestMode) {
+    reasons.push(
+      emailSuppression === 'complaint'
+        ? 'گیرنده ایمیل قبلی را هرزنامه گزارش کرده است - به این نشانی دیگر ایمیل ارسال نمی‌شود.'
+        : 'ایمیل قبلی به این نشانی برگشت خورده است (bounce دائمی) - به این نشانی دیگر ایمیل ارسال نمی‌شود.',
+    )
   }
 
   const recipient = effectiveTestMode ? (channel === 'whatsapp' ? testRecipients.whatsapp : testRecipients.email) || null : realRecipient

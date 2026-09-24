@@ -61,8 +61,9 @@ const DELIVERY_LABELS = {
   queued: 'در صف سرویس ایمیل',
   scheduled: 'زمان‌بندی‌شده',
   delivery_delayed: 'تأخیر در تحویل',
-  bounced: 'برگشت خورد (bounce)',
-  complained: 'گزارش هرزنامه',
+  bounced: 'برگشت خورد (bounce دائمی) — نشانی مسدود شد',
+  bounced_transient: 'برگشت موقت (bounce موقت)',
+  complained: 'گزارش هرزنامه — نشانی مسدود شد و سرنخ «عدم تماس» شد',
   failed: 'ناموفق',
   canceled: 'لغو شد',
 }
@@ -124,7 +125,7 @@ function RunReport({ report }) {
   )
 }
 
-function Overview({ settings, schedule, runs, counts, recipients, saving, onToggle, onSaveLimit }) {
+function Overview({ settings, schedule, runs, counts, recipients, lastProviderEvent, saving, onToggle, onSaveLimit }) {
   const savedLimit = resolveAutoEmailLimit(settings)
   const dailyCap = resolveDailyCap(settings)
   const sentToday = countSentToday(recipients)
@@ -230,6 +231,14 @@ function Overview({ settings, schedule, runs, counts, recipients, saving, onTogg
           </span>
         </div>
         <div className="info-row">
+          <span className="info-label">وضعیت تحویل (وب‌هوک Resend)</span>
+          <span className="info-value">
+            {lastProviderEvent
+              ? `آخرین رویداد: ${lastProviderEvent.event_type} — ${formatJalaliDateTime(lastProviderEvent.received_at)}`
+              : 'هنوز رویدادی از Resend دریافت نشده است؛ وضعیت تحویل فقط از رویدادهای Resend نمایش داده می‌شود.'}
+          </span>
+        </div>
+        <div className="info-row">
           <span className="info-label">اجرای زمان‌بندی‌شده بعدی</span>
           <span className="info-value">
             {!schedule
@@ -304,7 +313,7 @@ export default function EmailOutreachPage({ onOpenLead }) {
       {o.loading && <p className="profile-empty">در حال بارگذاری...</p>}
 
       {!o.loading && o.settings && tab === 'overview' && (
-        <Overview settings={o.settings} schedule={o.schedule} runs={o.runs} counts={o.counts} recipients={o.recipients} saving={o.saving} onToggle={toggle} onSaveLimit={o.setLimit} />
+        <Overview settings={o.settings} schedule={o.schedule} runs={o.runs} counts={o.counts} recipients={o.recipients} lastProviderEvent={o.lastProviderEvent} saving={o.saving} onToggle={toggle} onSaveLimit={o.setLimit} />
       )}
 
       {!o.loading && tab === 'queue' && (
@@ -371,7 +380,9 @@ export default function EmailOutreachPage({ onOpenLead }) {
                   {e.attempt?.external_message_id || '—'}
                 </td>
                 <td>
-                  {e.attempt?.provider_status ? DELIVERY_LABELS[e.attempt.provider_status] || e.attempt.provider_status : 'پذیرفته‌شده توسط Resend (وضعیت تحویل هنوز دریافت نشده)'}
+                  {e.attempt?.provider_status
+                    ? DELIVERY_LABELS[e.attempt.provider_status] || e.attempt.provider_status
+                    : 'پذیرفته‌شده توسط Resend — وضعیت تحویل هنوز از Resend دریافت نشده'}
                   {e.attempt?.provider_status_at && <div className="lead-form-hint">{formatJalaliDateTime(e.attempt.provider_status_at)}</div>}
                 </td>
               </tr>

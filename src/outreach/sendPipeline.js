@@ -24,7 +24,8 @@
 // the provider is ever called - only one concurrent caller can win it.
 // ---------------------------------------------------------------------------
 
-import { evaluateSendGate, maskRecipient, resolveEffectiveTestMode, sendIdempotencyKey, buildEmailBody, emailSubjectFor } from './sendGate.js'
+import { evaluateSendGate, maskRecipient, resolveEffectiveTestMode, resolveRealRecipient, sendIdempotencyKey, buildEmailBody, emailSubjectFor } from './sendGate.js'
+import { normalizeEmail } from '../prospecting/normalization.js'
 import { getProviderSendFn } from './providers/index.js'
 
 // Test and production sends are scoped to DIFFERENT idempotency keys (and
@@ -48,6 +49,16 @@ async function fetchAutomationSettings(client) {
   const { data, error } = await client.from('automation_settings').select('*').eq('id', 1).single()
   if (error) throw error
   return data
+}
+
+// 'hard_bounce' / 'complaint' when Resend reported this address as
+// undeliverable or a spam complaint (resend-webhook), else null.
+async function fetchEmailSuppression(client, lead) {
+  const address = normalizeEmail(resolveRealRecipient(lead, 'email'))
+  if (!address) return null
+  const { data, error } = await client.from('email_outreach_recipients').select('normalized_email, suppressed_at, suppression_reason').eq('normalized_email', address)
+  if (error) throw error
+  return (data || []).find((r) => r.suppressed_at)?.suppression_reason || null
 }
 
 async function fetchLeadAttempts(client, leadId) {
@@ -249,9 +260,10 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
   const effectiveTestMode = resolveEffectiveTestMode(settings, testMode)
   const idempotencyKey = idempotencyKeyFor(suggestionId, effectiveTestMode)
 
-  const [leadAttempts, priorSent] = await Promise.all([
+  const [leadAttempts, priorSent, emailSuppression] = await Promise.all([
     lead ? fetchLeadAttempts(client, lead.id) : Promise.resolve([]),
     existingSentAttempt(client, idempotencyKey),
+    lead && channel === 'email' ? fetchEmailSuppression(client, lead) : Promise.resolve(null),
   ])
   const { duplicateIdempotencyExists, ambiguousPriorDelivery } = priorSendState(priorSent, effectiveTestMode)
 
@@ -263,6 +275,7 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
     credentialsConfigured,
     duplicateIdempotencyExists,
     ambiguousPriorDelivery,
+    emailSuppression,
     testMode,
     testRecipients,
     now,

@@ -81,11 +81,12 @@ export const EMAIL_STATE_ACTIONS = {
   bounced: 'نشانی را اصلاح کنید یا از راه دیگری تماس بگیرید.',
 }
 
+// Statuses come only from Resend (resend-webhook). A hard bounce or
+// complaint also suppresses the address (recipient.suppressed_at).
 const BAD_PROVIDER_STATUSES = new Set(['bounced', 'complained', 'failed', 'canceled'])
-const FINAL_PROVIDER_STATUSES = new Set(['delivered', 'bounced', 'complained', 'failed', 'canceled', 'opened', 'clicked'])
 
-export function isFinalProviderStatus(status) {
-  return FINAL_PROVIDER_STATUSES.has(status)
+function isBounced(attempt, recipient) {
+  return BAD_PROVIDER_STATUSES.has(attempt?.provider_status) || Boolean(recipient?.suppressed_at)
 }
 
 export function leadSource(lead) {
@@ -150,13 +151,13 @@ export function buildEmailOutreachState({ leads = [], suggestions = [], attempts
     if (sentAttempt) {
       entry.suggestion = own.find((s) => s.id === sentAttempt.suggestion_id) || null
       entry.attempt = sentAttempt
-      set('sent', BAD_PROVIDER_STATUSES.has(sentAttempt.provider_status) ? 'bounced' : null)
+      set('sent', isBounced(sentAttempt, recipient) ? 'bounced' : null)
       continue
     }
     if (recipient && recipient.lead_id === lead.id) {
       entry.suggestion = own.find((s) => s.id === recipient.suggestion_id) || null
       entry.attempt = latest(realAttempts)
-      if (recipient.status === 'sent') set('sent')
+      if (recipient.status === 'sent') set('sent', isBounced(entry.attempt, recipient) ? 'bounced' : null)
       else set('attention', recipient.status === 'failed' ? 'failed' : 'uncertain')
       continue
     }

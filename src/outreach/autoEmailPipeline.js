@@ -16,7 +16,6 @@
 //      one lock), then
 //      through attemptSend() (send gate, per-suggestion claim, idempotency
 //      key, opt-out footer),
-//   4. refreshes the provider delivery status of recent sends,
 // and records the run in email_outreach_runs. An uncertain or failed send
 // keeps its address claimed, so it is never retried automatically.
 // ---------------------------------------------------------------------------
@@ -31,7 +30,6 @@ import {
   composeAutoIntroEmail,
   countSentToday,
   resolveDailyCap,
-  isFinalProviderStatus,
   productHintsFor,
   resolveAutoEmailLimit,
 } from './autoEmail.js'
@@ -108,24 +106,6 @@ async function queueEntry(client, entry, candidate, now) {
   return data?.[0] || null
 }
 
-async function refreshDeliveryStatuses(client, attempts, fetchDeliveryStatus, now, report) {
-  if (!fetchDeliveryStatus) return
-  const cutoff = now.getTime() - 14 * 24 * 60 * 60 * 1000
-  const pending = attempts
-    .filter((a) => a.channel === 'email' && a.status === 'sent' && !a.test_mode && a.external_message_id && !isFinalProviderStatus(a.provider_status))
-    .filter((a) => new Date(a.created_at).getTime() >= cutoff)
-    .slice(0, 20)
-  for (const attempt of pending) {
-    const result = await fetchDeliveryStatus(attempt.external_message_id)
-    if (!result?.ok || !result.status) {
-      report.deliveryStatusErrors.push(result?.error || 'unknown')
-      continue
-    }
-    await client.from('outreach_attempts').update({ provider_status: result.status, provider_status_at: new Date().toISOString() }).eq('id', attempt.id)
-    report.deliveryStatusesUpdated += 1
-  }
-}
-
 const EMAIL_LOOKUP_BATCH = 8
 const EMAIL_LOOKUP_CONCURRENCY = 4
 
@@ -162,7 +142,7 @@ async function runEmailLookup(client, { leads, candidateByLead, now, fetchPage, 
 
 export async function runAutoEmailCycle(
   client,
-  { trigger = 'cron', credentials = {}, testRecipients = {}, actorUserId = null, now = new Date(), fetchDeliveryStatus = null, fetchPage = null } = {},
+  { trigger = 'cron', credentials = {}, testRecipients = {}, actorUserId = null, now = new Date(), fetchPage = null } = {},
 ) {
   const report = {
     status: 'completed',
@@ -174,8 +154,6 @@ export async function runAutoEmailCycle(
     failed: 0,
     uncertain: 0,
     blocked: 0,
-    deliveryStatusesUpdated: 0,
-    deliveryStatusErrors: [],
     notSending: null,
     limit: null,
     dailyCap: null,
@@ -331,9 +309,6 @@ export async function runAutoEmailCycle(
         })
       }
     }
-
-    // 4. Delivery status of recent sends.
-    await refreshDeliveryStatuses(client, attempts, fetchDeliveryStatus, now, report)
 
     const { data: recipientsAfter, error: recipientsError } = await client.from('email_outreach_recipients').select('*')
     if (recipientsError) throw recipientsError
