@@ -85,7 +85,7 @@ export default function AdminReplyInboxPage({ onOpenLead }) {
       <div className="page-toolbar">
         <div>
           <h2>پاسخ‌ها</h2>
-          <p className="today-subtitle">این مشتری چی گفت و الان قدم بعدی چیه؟</p>
+          <p className="today-subtitle">پاسخ مشتری را ثبت کنید تا نتیجهٔ ارتباط اولیه مشخص باشد؛ مذاکره و پاسخ‌دادن خودکار در این دمو انجام نمی‌شود.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" className="btn-secondary" onClick={refresh}>

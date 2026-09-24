@@ -21,72 +21,30 @@ import AdminAutomationPage from './automation/AdminAutomationPage'
 import EmailOutreachPage from './outreach/EmailOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 import AdminProspectingPage from './prospecting/AdminProspectingPage'
+import AdminMissionPage from './AdminMissionPage'
 import './today/Today.css'
 import './AdminNavGroups.css'
 
-// ---------------------------------------------------------------------------
-// Phase 26 prep - Admin Information Architecture cleanup.
-//
-// This is a PURE navigation/presentation reorganization. Every existing
-// page/component below is reused completely unchanged; every existing route
-// key (dashboard/today/automation/outreach/replies/prospecting/
-// registrationRequests/customers/crm/leads/orders/products/invoices/
-// payments/followUps/reports) is STILL a valid, directly-linkable activeKey
-// with exactly the same content it always rendered - nothing was deleted,
-// nothing was renamed at the routing level, no business logic/API/Supabase
-// call changed anywhere. Only the SIDEBAR now shows 5 grouped destinations
-// instead of 16 flat ones, with a small sub-tab strip inside each group for
-// its member pages. Old bookmarked URLs (e.g. /admin/leads, /admin/crm,
-// /admin/dashboard) keep working exactly as before - see keyFromPathname().
-//
-// GROUPS is the single source of truth for both the sidebar and each
-// group's sub-navigation tabs. `tabs` is omitted for a group that is just
-// one page (خانه/گزارش‌ها) - no sub-nav is shown for those.
-// ---------------------------------------------------------------------------
+// Keep the demo focused on discovery, first contact and recording outcomes.
+// Legacy pages remain directly accessible at their old URLs, but are not
+// displayed in the primary navigation.
 const GROUPS = [
-  { key: 'home', label: 'خانه' },
+  { key: 'home', label: 'نمای کار' },
+  { key: 'prospecting', label: 'کشف مشتری' },
+  { key: 'leads', label: 'سرنخ‌ها' },
   {
-    key: 'sales',
-    label: 'فروش',
-    defaultKey: 'leads',
+    key: 'contact',
+    label: 'ارتباط اولیه',
+    defaultKey: 'outreach',
     tabs: [
-      { key: 'leads', label: 'سرنخ‌ها' },
-      { key: 'outreach', label: 'ارسال ایمیل' },
-      { key: 'prospecting', label: 'کشف مشتری', advanced: true },
-      { key: 'replies', label: 'پاسخ‌ها', advanced: true },
-    ],
-  },
-  {
-    key: 'customers',
-    label: 'مشتریان',
-    defaultKey: 'customers',
-    tabs: [
-      { key: 'customers', label: 'لیست مشتریان' },
-      { key: 'orders', label: 'سفارش‌ها' },
-      { key: 'invoices', label: 'فاکتورها' },
-      { key: 'crm', label: 'نمای کامل مشتری', advanced: true },
-      { key: 'registrationRequests', label: 'درخواست‌های عضویت', advanced: true },
-      { key: 'followUps', label: 'پیگیری‌های مالی', advanced: true },
-    ],
-  },
-  { key: 'reports', label: 'گزارش‌ها' },
-  {
-    key: 'system',
-    label: 'سیستم',
-    defaultKey: 'products',
-    tabs: [
-      { key: 'products', label: 'محصولات' },
-      { key: 'automation', label: 'اتوماسیون', advanced: true },
+      { key: 'outreach', label: 'ایمیل‌ها' },
+      { key: 'replies', label: 'نتیجهٔ ارتباط' },
     ],
   },
 ]
 
 const GROUPS_BY_KEY = new Map(GROUPS.map((g) => [g.key, g]))
 
-// Maps every leaf activeKey (and the two legacy Home aliases) to the group
-// it now lives under - used to highlight the right sidebar item and to pick
-// which group's sub-tabs to show, regardless of which specific page/URL the
-// admin is actually on.
 const GROUP_OF_KEY = (() => {
   const map = { dashboard: 'home', today: 'home' }
   for (const group of GROUPS) {
@@ -96,9 +54,6 @@ const GROUP_OF_KEY = (() => {
   return map
 })()
 
-// Every activeKey this app can ever render - unchanged from before this
-// cleanup, plus the new 'home' key. Used only to validate a URL segment; it
-// is NOT what the sidebar displays (see GROUPS/SIDEBAR_ITEMS above/below).
 const ALL_VALID_KEYS = new Set([
   'home',
   'dashboard',
@@ -162,8 +117,6 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
     onNavigateUrl?.(`/admin/${key}`)
   }
 
-  // Sidebar buttons carry a GROUP key (e.g. 'sales'), never a leaf page key
-  // directly - clicking one lands on that group's default/first page.
   function navigateToGroup(groupKey) {
     const group = GROUPS_BY_KEY.get(groupKey)
     navigate(group?.defaultKey || groupKey)
@@ -199,13 +152,13 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
     setSelectedLeadId(leadId)
   }
 
-  const activeGroupKey = GROUP_OF_KEY[activeKey] || activeKey
+  const activeGroupKey = GROUP_OF_KEY[activeKey] || 'home'
   const activeGroup = GROUPS_BY_KEY.get(activeGroupKey)
 
   return (
     <AppShell
       title="پنل هینزا"
-      subtitle="مدیریت فروش B2B"
+      subtitle="کشف مشتری و ارتباط اولیه"
       logo={<BrandLogo size="sm" />}
       navItems={SIDEBAR_ITEMS}
       activeKey={activeGroupKey}
@@ -233,7 +186,8 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
         </nav>
       )}
 
-      {(activeKey === 'home' || activeKey === 'today') && (
+      {activeKey === 'home' && <AdminMissionPage onNavigate={navigate} />}
+      {activeKey === 'today' && (
         <AdminTodayPage
           onNavigate={navigate}
           onOpenLead={openLead}
