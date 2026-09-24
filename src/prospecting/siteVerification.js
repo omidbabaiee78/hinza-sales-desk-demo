@@ -3,7 +3,7 @@ import { extractEvidence, matchedEntityType, matchedBuyerFit, matchedIdentity, m
 import { isNonCompanyEntityType } from './entityClassification.js'
 import { scoreCandidate } from './scoringEngine.js'
 import { qualifyCandidate } from './qualification.js'
-import { isPromotableIdentity, resolveVerifiedIdentity } from './identityResolution.js'
+import { isPromotableIdentity, isPlausibleOrganizationName, resolveVerifiedIdentity, IDENTITY_SOURCES } from './identityResolution.js'
 import { normalizedNameKey } from './normalization.js'
 import { lookupCompanyEmail, LOOKUP_LIMITS } from '../outreach/emailDiscovery.js'
 
@@ -45,7 +45,12 @@ function originOf(url) {
 // brand: the part before a separator, then before a trailing activity
 // phrase. Never adds anything that isn't in the site's own text.
 export function tidyCompanyName(name) {
-  const first = String(name || '').split(/\s*[|،:]\s*|\s+[,–—-]\s+/)[0].trim()
+  // "Welcome To Tak Cable Works Co." -> "Tak Cable Works Co.";
+  // "X. با بیش از پنجاه سال تجربه..." -> "X" (a sentence, not a name).
+  const first = String(name || '')
+    .replace(/^\s*welcome\s+to\s+/i, '')
+    .split(/\s*[|،:]\s*|\s+[,–—-]\s+|\.\s+/)[0]
+    .trim()
   const brand = first.split(/\s(?:تولید\s*کننده|تولیدکننده|تولید و|فروش|عرضه|واردکننده|نمایندگی)\s/)[0].trim()
   return brand.length >= 2 ? brand : first
 }
@@ -69,15 +74,39 @@ function hasIndustryEvidence(evidence) {
   )
 }
 
-// The site-confirmed prospect rule described in the header.
-export function isSiteConfirmedBuyer(evidence) {
+// A usable company name for the lead: a plausible organization name the
+// company's own site (or its search result) gives - never a product/page
+// title (isPlausibleOrganizationName) and never a bare domain label.
+const NO_NAME_SOURCES = new Set([IDENTITY_SOURCES.DOMAIN_FALLBACK, IDENTITY_SOURCES.NOT_APPLICABLE, IDENTITY_SOURCES.UNRESOLVED])
+
+export function hasUsableCompanyName(identity) {
+  return Boolean(identity?.resolvedName) && identity.status !== 'unresolved' && !NO_NAME_SOURCES.has(identity.source) && isPlausibleOrganizationName(identity.resolvedName)
+}
+
+// Registration rule: a REASONABLE signal that this is a real company that
+// makes or uses polymer products - no score threshold, no perfect product
+// match, no email required (a lead without contacts stays registered and
+// enrichment keeps looking). Required: its own company site (not an
+// article, directory, marketplace, social or video page), some polymer
+// evidence (buyer fit high = production wording, or medium = industry
+// evidence without it), no strong negative signal, and a real company name.
+// Still never registered: competitors (masterbatch/pigment producers, buyer
+// fit low), machinery makers, associations, research/medical bodies (not
+// a buyer).
+export function isReasonableProspect(evidence) {
+  const buyerFit = matchedBuyerFit(evidence)
   return (
     matchedEntityType(evidence) === 'direct_company' &&
-    matchedBuyerFit(evidence) === 'high' &&
+    (buyerFit === 'high' || buyerFit === 'medium') &&
     !matchedHasStrongNegative(evidence) &&
     hasIndustryEvidence(evidence) &&
-    isPromotableIdentity(matchedIdentity(evidence))
+    hasUsableCompanyName(matchedIdentity(evidence))
   )
+}
+
+// Kept for callers/tests of the earlier, stricter rule.
+export function isSiteConfirmedBuyer(evidence) {
+  return isReasonableProspect(evidence) && matchedBuyerFit(evidence) === 'high' && isPromotableIdentity(matchedIdentity(evidence))
 }
 
 // Candidates the site step never needs to load: a page the snippet already
@@ -132,7 +161,7 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
   const baseline = matchedIdentity(evidence)
   const identity = resolveVerifiedIdentity({ domain: candidate.domain, signals, baseline })
   if (identity !== baseline) evidence = replaceIdentityEvidence(evidence, identity)
-  if (isPromotableIdentity(identity)) {
+  if (hasUsableCompanyName(identity)) {
     const name = tidyCompanyName(identity.resolvedName)
     enriched = { ...enriched, canonical_name: name, normalized_name_key: normalizedNameKey(name) }
   }
@@ -151,6 +180,6 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
 
   const scores = scoreCandidate(enriched, evidence)
   const qualification = qualifyCandidate({ candidate: enriched, evidence, scores, settings })
-  const promotable = (qualification.status === 'qualified' && qualification.autoPromotable) || isSiteConfirmedBuyer(evidence)
+  const promotable = (qualification.status === 'qualified' && qualification.autoPromotable) || isReasonableProspect(evidence)
   return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, phoneSourceUrl, ...emailFields }
 }

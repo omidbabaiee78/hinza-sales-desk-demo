@@ -225,12 +225,20 @@ function lettersOnly(text) {
   return String(text || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-// True when a and b share a run of at least 4 letters/digits
-// ("psgharn" / "gharn", "denizgroup" / "denizshimi").
+// Industry words many unrelated companies share - a match on one of these
+// alone says nothing about two names being the same company
+// (pakchemical.com vs sales@pishrochem.com share only "chem").
+const GENERIC_NAME_PARTS = /(chemical|chemi|chem|shimi|plastic|plast|polymer|poly|pack|group|industrial|industry|sanat|baspar|pars|iran|cable|pipe|film|trading|company|info|sales|mail)/g
+
+// True when a and b share a run of at least 4 letters/digits outside
+// those generic words ("psgharn" / "gharn", "denizgroup" / "denizshimi").
 function sharesNamePart(a, b, min = 4) {
-  const x = lettersOnly(a)
-  const y = lettersOnly(b)
-  for (let i = 0; i + min <= x.length; i += 1) if (y.includes(x.slice(i, i + min))) return true
+  const x = lettersOnly(a).replace(GENERIC_NAME_PARTS, ' ')
+  const y = lettersOnly(b).replace(GENERIC_NAME_PARTS, ' ')
+  for (let i = 0; i + min <= x.length; i += 1) {
+    const part = x.slice(i, i + min)
+    if (!part.includes(' ') && y.includes(part)) return true
+  }
   return false
 }
 
