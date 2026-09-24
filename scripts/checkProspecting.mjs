@@ -3581,4 +3581,54 @@ await check('Phase 36: names are cleaned of greetings, sentences and activity ph
   assert.equal(isPlausibleOrganizationName('آسیا چمن'), true)
 })
 
+await check('Phase 36 (production case): a classifieds portal listing a company is never registered, and its contacts never go to that company', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, {
+    website: 'https://shahr24.com/ads/123',
+    domain: 'shahr24.com',
+    raw_name: 'شرکت حباب باران تولید کننده نایلون حبابدار',
+    canonical_name: 'شرکت حباب باران تولید کننده نایلون حبابدار',
+    business_description: 'شرکت حباب باران تولید کننده نایلون حبابدار و فوم پلی اتیلن',
+  })
+  const { fetchPage } = fakeSite({
+    'https://shahr24.com/': sitePage({
+      title: 'شهر24 | نیازمندیهای رایگان | سایت آگهی و نیازمندیها',
+      siteName: 'شهر24',
+      description: 'آگهی رایگان و نیازمندیها و تبلیغات رایگان در سایت شهر24',
+      body: 'pr@shahr24.com آگهی: فروش نایلون حبابدار، لوله پلی اتیلن، ظروف پلاستیکی',
+    }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 0)
+})
+
+await check('Phase 36 (production case): a name from a search snippet is not enough - the site must name itself', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { raw_name: 'شرکت حباب باران', canonical_name: 'شرکت حباب باران', business_description: 'شرکت حباب باران تولید کننده نایلون حبابدار' })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': sitePage({ title: 'تولید کننده نایلون حبابدار', description: 'نایلون حبابدار', body: 'info@sample-plast.ir' }) })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 0)
+})
+
+await check('Phase 36 (production case): a foreign supplier with no Iranian signal is not registered', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { website: 'https://guoshengpacking.com/', domain: 'guoshengpacking.com' })
+  const { fetchPage } = fakeSite({
+    'https://guoshengpacking.com/': sitePage({ title: 'Linyi Guoshengli Packaging Material Co., Ltd.', siteName: 'Linyi Guoshengli Packaging Material Co., Ltd.', description: 'PE film, shrink film and stretch film manufacturer in Shandong, China', body: 'sales@guoshengpacking.com' }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 0)
+})
+
+await check('Phase 36: a manufacturer whose title names no product is still registered when its homepage text shows polymer products', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { website: 'https://rasha-sample.ir/', domain: 'rasha-sample.ir', business_description: 'تولید کیسه گونی' })
+  const { fetchPage } = fakeSite({
+    'https://rasha-sample.ir/': sitePage({ title: 'خانه - راشا نمونه', siteName: 'راشا نمونه', description: 'شرکت راشا نمونه با سابقه در صنایع تولیدی', body: '<p>تولید کننده گونی پلاستیکی و کیسه بافته پلی پروپیلن در کارخانه</p> info@rasha-sample.ir' }),
+  })
+  await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+  assert.equal(client.tables.sales_leads.length, 1)
+  assert.equal(client.tables.sales_leads[0].company_name, 'راشا نمونه')
+})
+
 console.log(`\n${passed} check(s) passed.`)

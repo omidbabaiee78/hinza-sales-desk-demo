@@ -146,7 +146,8 @@ const ENTITY_WORDS = [
 // them: each is, on its own, rarely how a real manufacturer describes its
 // OWN homepage/about page, and is exactly the kind of phrasing the spec
 // calls out ("بانک اطلاعات", "قیمت و خرید", "مقاله").
-const STANDALONE_DIRECTORY_PHRASES = ['بانک اطلاعات']
+// «آگهی اصناف و مشاغل» (payamagahi.com) - a business-listing site.
+const STANDALONE_DIRECTORY_PHRASES = ['بانک اطلاعات', 'اصناف و مشاغل', 'راهنمای مشاغل']
 // "شرکت های تولید کننده" ("companies that manufacture...") is, unlike the
 // plain ENTITY_WORDS above, ALREADY self-sufficient on its own - it always
 // describes MULTIPLE companies, never a single company's own self-
@@ -158,10 +159,14 @@ const STANDALONE_DIRECTORY_PHRASES = ['بانک اطلاعات']
 // purpose - that guard exists for phrases like "بانک اطلاعات" that are
 // ambiguous without it, but THIS phrase's own "تولید کننده" half would
 // always satisfy that guard and defeat it.
-const UNGUARDED_DIRECTORY_PHRASES = ['شرکت های تولید کننده']
+// «تولید کننده ها، وارد کننده ها، تامین کننده ها» (parscenter.com) - a
+// company never describes itself with the plural.
+const UNGUARDED_DIRECTORY_PHRASES = ['شرکت های تولید کننده', 'تولید کننده ها', 'وارد کننده ها', 'تامین کننده ها']
 // «نمایشگاه و بازار مجازی ایران» (namabazaar.com) - an online B2B market,
 // not a company.
-const STANDALONE_MARKETPLACE_PHRASES = ['قیمت و خرید', 'قیمت و فروش', 'خرید و فروش', 'بازار مجازی', 'نمایشگاه مجازی']
+// Classifieds sites (shahr24.com «نیازمندیهای رایگان | سایت آگهی»,
+// fardabazar.ir «درج آگهی و تبلیغات رایگان») list other companies' ads.
+const STANDALONE_MARKETPLACE_PHRASES = ['قیمت و خرید', 'قیمت و فروش', 'خرید و فروش', 'بازار مجازی', 'نمایشگاه مجازی', 'آگهی رایگان', 'نیازمندی', 'نیازمندیها', 'نیازمندی ها', 'درج آگهی', 'ثبت آگهی', 'سایت آگهی', 'تبلیغات رایگان']
 const STANDALONE_ARTICLE_PHRASES = ['مقاله']
 
 // Section K - retail/commerce wording ("قیمت و خرید" etc.) must not brand a

@@ -179,7 +179,9 @@ export function resolveOfficialWebsite(candidates) {
 
 export function extractEmails(html) {
   const cloudflare = [...(html || '').matchAll(/(?:data-cfemail=["']|email-protection#)([0-9a-f]{6,})/gi)].map((m) => decodeCloudflareEmail(m[1]))
-  let text = deobfuscate(`${decodeHtmlEntities(html || '')} ${cloudflare.join(' ')}`)
+  // "&nbspinfo@x.ir" (an entity without its semicolon) must not become the
+  // address "nbspinfo@x.ir".
+  let text = deobfuscate(`${decodeHtmlEntities((html || '').replace(/&nbsp;?/gi, ' '))} ${cloudflare.join(' ')}`)
   try {
     text = decodeURIComponent(text)
   } catch {
@@ -309,7 +311,7 @@ function landlineKey(raw) {
   return /^0[1-8]\d{9}$/.test(local) ? local : null
 }
 
-function visibleText(html) {
+export function visibleText(html) {
   const stripped = String(html || '')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
