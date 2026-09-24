@@ -50,6 +50,19 @@ export function tidyCompanyName(name) {
   return brand.length >= 2 ? brand : first
 }
 
+function sharesPart(a, b, min = 4) {
+  const x = String(a || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const y = String(b || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  for (let i = 0; i + min <= x.length; i += 1) if (y.includes(x.slice(i, i + min))) return true
+  return false
+}
+
+export function isForeignLatinName(name, domain) {
+  if (!name || /[^\x20-\x7e]/.test(name) || !domain) return false
+  const label = domain.replace(/^www\./, '').split('.')[0]
+  return !sharesPart(name, label) && !sharesPart(label, name)
+}
+
 function hasIndustryEvidence(evidence) {
   return evidence.some(
     (e) => e.evidenceType === 'industry_keyword' || e.evidenceType === 'generic_manufacturing_signal' || e.evidenceType === 'structured_industrial_signal',
@@ -104,6 +117,12 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
   if (!home.ok) return { ok: false, status: 'fetch_failed', ...emailFields }
 
   const signals = identitySignalsFromHtml(home.text)
+  // Theme placeholders: rashaplast.ir's JSON-LD and og:site_name both say
+  // "recook". A Latin-only name sharing nothing with the domain is not
+  // this company's name - fall through to the next marker (the title).
+  for (const key of ['jsonLdOrganizationName', 'ogSiteName']) {
+    if (isForeignLatinName(signals[key], candidate.domain)) signals[key] = null
+  }
   const siteText = [signals.titleText, signals.description].filter(Boolean).join(' — ')
   let enriched = { ...candidate, business_description: [candidate.business_description, siteText].filter(Boolean).join(' — ') }
   let evidence = extractEvidence(enriched)
