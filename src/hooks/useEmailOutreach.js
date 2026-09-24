@@ -26,7 +26,7 @@ export function useEmailOutreach() {
 
   const load = useCallback(async () => {
     try {
-      const [settings, leads, suggestions, attempts, recipients, replies, runs, schedule] = await Promise.all([
+      const [settings, leads, suggestions, attempts, recipients, replies, runs, schedule, providerEvents] = await Promise.all([
         must(supabase.from('automation_settings').select('*').eq('id', 1).single()),
         must(supabase.from('sales_leads').select(LEAD_COLUMNS)),
         must(supabase.from('prospect_outreach_suggestions').select('*').eq('channel', 'email')),
@@ -35,8 +35,9 @@ export function useEmailOutreach() {
         must(supabase.from('inbound_replies').select('lead_id, predicted_intent, final_intent')),
         must(supabase.from('email_outreach_runs').select('*').order('started_at', { ascending: false }).limit(5)),
         must(supabase.rpc('email_outreach_schedule')),
+        must(supabase.from('email_provider_events').select('event_type, status, received_at').order('received_at', { ascending: false }).limit(1)),
       ])
-      setData({ settings, leads, suggestions, attempts, recipients, replies, runs, schedule: schedule?.[0] || null })
+      setData({ settings, leads, suggestions, attempts, recipients, replies, runs, schedule: schedule?.[0] || null, lastProviderEvent: providerEvents?.[0] || null })
       setError('')
     } catch {
       setError('بارگذاری اطلاعات ارسال ایمیل انجام نشد. «به‌روزرسانی» را بزنید.')

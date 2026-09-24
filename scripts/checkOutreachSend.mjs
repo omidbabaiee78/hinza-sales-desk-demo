@@ -646,6 +646,7 @@ function makeFakeClient() {
     outreach_send_claims: [],
     lead_activities: [],
     automation_settings: [{ id: 1, ...baseSettings }],
+    email_outreach_recipients: [],
   }
   let nextId = 1
   const newId = (table) => `${table}-${nextId++}`

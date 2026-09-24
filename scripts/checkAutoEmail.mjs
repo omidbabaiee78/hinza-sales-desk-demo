@@ -5,7 +5,9 @@
 import assert from 'node:assert/strict'
 import { buildEmailOutreachState, composeAutoIntroEmail, nextCronRun, resolveAutoEmailLimit, summarizeEmailOutreach } from '../src/outreach/autoEmail.js'
 import { runAutoEmailCycle } from '../src/outreach/autoEmailPipeline.js'
-import { EMAIL_OPT_OUT_FOOTER } from '../src/outreach/sendGate.js'
+import { EMAIL_OPT_OUT_FOOTER, evaluateSendGate } from '../src/outreach/sendGate.js'
+import { attemptSend } from '../src/outreach/sendPipeline.js'
+import { applyResendEvent, signResendPayload, verifyResendSignature } from '../src/outreach/resendWebhook.js'
 import { lookupCompanyEmail, pickCompanyEmail } from '../src/outreach/emailDiscovery.js'
 import { tehranDateKey } from '../src/utils/leadFollowUp.js'
 
@@ -455,25 +457,6 @@ await check('a gate block before any provider call releases the address; the nex
   })
 })
 
-await check('delivery status is fetched for sent emails and a bounce shows up as needing attention', async () => {
-  const l = lead()
-  const client = makeClient({ leads: [l] })
-  await withResend({}, async () => {
-    await run(client)
-    const statuses = []
-    await run(client, { fetchDeliveryStatus: async (id) => (statuses.push(id), { ok: true, status: 'bounced' }) })
-    assert.equal(statuses.length, 1)
-    const attempt = client.tables.outreach_attempts.find((a) => a.status === 'sent')
-    assert.equal(attempt.provider_status, 'bounced')
-    const entry = stateOf(client, l.id)
-    assert.equal(entry.state, 'sent')
-    assert.equal(entry.kind, 'bounced')
-    const again = []
-    await run(client, { fetchDeliveryStatus: async (id) => (again.push(id), { ok: true, status: 'bounced' }) })
-    assert.equal(again.length, 0, 'a final status is not fetched again')
-  })
-})
-
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -652,6 +635,135 @@ await check('a lead already being worked (negotiating, no logged contact) is ski
     await run(client)
     assert.equal(sent.length, 0)
     assert.equal(stateOf(client, working.id).kind, 'already_in_contact')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Resend webhook: signature, status updates, suppression. No network.
+// ---------------------------------------------------------------------------
+
+const WEBHOOK_SECRET = `whsec_${Buffer.from('hinza-test-webhook-secret-32bytes!').toString('base64')}`
+
+async function signedEvent(event, { id = `msg_${Math.random().toString(36).slice(2)}`, at = noon, secret = WEBHOOK_SECRET } = {}) {
+  const body = JSON.stringify(event)
+  const timestamp = String(Math.floor(at.getTime() / 1000))
+  const signature = `v1,${await signResendPayload({ secret, id, timestamp, body })}`
+  return { id, timestamp, signature, body }
+}
+
+function resendEvent(type, emailId, to, extra = {}) {
+  return { type, created_at: '2026-09-24T11:00:00.000Z', data: { email_id: emailId, to: [to], ...extra } }
+}
+
+// A lead whose intro was really sent by the runner; returns its message id.
+async function sentLead(client, l) {
+  await withResend({}, async () => {
+    await run(client)
+  })
+  return client.tables.outreach_attempts.find((a) => a.lead_id === l.id && a.status === 'sent').external_message_id
+}
+
+async function deliver(client, event, id) {
+  return applyResendEvent(client, { eventId: id || `evt-${Math.random()}`, event, payloadText: JSON.stringify(event), now: noon })
+}
+
+await check('webhook signature: valid accepted; tampered body, wrong secret, stale timestamp and missing headers rejected', async () => {
+  const s = await signedEvent(resendEvent('email.delivered', 'e1', 'info@acme.ir'))
+  assert.deepEqual(await verifyResendSignature({ secret: WEBHOOK_SECRET, ...s, now: noon }), { ok: true })
+  assert.equal((await verifyResendSignature({ secret: WEBHOOK_SECRET, ...s, body: s.body.replace('delivered', 'bounced'), now: noon })).reason, 'bad_signature')
+  const other = `whsec_${Buffer.from('another-secret-another-secret-xx').toString('base64')}`
+  assert.equal((await verifyResendSignature({ secret: other, ...s, now: noon })).reason, 'bad_signature')
+  assert.equal((await verifyResendSignature({ secret: WEBHOOK_SECRET, ...s, now: new Date(noon.getTime() + 10 * 60 * 1000) })).reason, 'stale_timestamp')
+  assert.equal((await verifyResendSignature({ secret: WEBHOOK_SECRET, ...s, signature: null, now: noon })).reason, 'missing_headers')
+  assert.equal((await verifyResendSignature({ secret: null, ...s, now: noon })).reason, 'no_secret')
+  // Several signatures (secret rotation): any valid v1 is enough.
+  assert.equal((await verifyResendSignature({ secret: WEBHOOK_SECRET, ...s, signature: `v1,AAAA ${s.signature}`, now: noon })).ok, true)
+})
+
+await check('webhook: delivered updates the existing send record once; a repeated event id changes nothing', async () => {
+  const l = lead()
+  const client = makeClient({ leads: [l] })
+  client.tables.email_provider_events = []
+  const messageId = await sentLead(client, l)
+  const event = resendEvent('email.delivered', messageId, l.email)
+  const first = await deliver(client, event, 'evt-1')
+  assert.equal(first.attemptsUpdated, 1)
+  const attempt = client.tables.outreach_attempts.find((a) => a.external_message_id === messageId)
+  assert.equal(attempt.provider_status, 'delivered')
+  assert.equal(client.tables.email_outreach_recipients.find((r) => r.normalized_email === l.email).delivery_status, 'delivered')
+  const again = await deliver(client, event, 'evt-1')
+  assert.equal(again.duplicate, true)
+  assert.equal(client.tables.email_provider_events.length, 1)
+  assert.equal(stateOf(client, l.id).kind, null)
+})
+
+await check('webhook: a hard bounce suppresses the address, shows as bounced, and a late "delivered" never hides it', async () => {
+  const l = lead()
+  const client = makeClient({ leads: [l] })
+  client.tables.email_provider_events = []
+  const messageId = await sentLead(client, l)
+  const result = await deliver(client, resendEvent('email.bounced', messageId, l.email, { bounce: { type: 'Permanent', subType: 'General' } }))
+  assert.deepEqual(result.suppressed, [l.email])
+  await deliver(client, resendEvent('email.delivered', messageId, l.email))
+  const attempt = client.tables.outreach_attempts.find((a) => a.external_message_id === messageId)
+  assert.equal(attempt.provider_status, 'bounced')
+  const recipient = client.tables.email_outreach_recipients.find((r) => r.normalized_email === l.email)
+  assert.equal(recipient.suppression_reason, 'hard_bounce')
+  assert.equal(recipient.delivery_status, 'bounced')
+  assert.equal(stateOf(client, l.id).kind, 'bounced')
+})
+
+await check('webhook: a transient bounce is recorded but does not suppress the address', async () => {
+  const l = lead()
+  const client = makeClient({ leads: [l] })
+  client.tables.email_provider_events = []
+  const messageId = await sentLead(client, l)
+  const result = await deliver(client, resendEvent('email.bounced', messageId, l.email, { bounce: { type: 'Transient' } }))
+  assert.deepEqual(result.suppressed, [])
+  assert.equal(client.tables.outreach_attempts.find((a) => a.external_message_id === messageId).provider_status, 'bounced_transient')
+  assert.equal(client.tables.email_outreach_recipients.find((r) => r.normalized_email === l.email).suppressed_at, undefined)
+})
+
+await check('webhook: a complaint suppresses the address and marks every lead with it do_not_contact', async () => {
+  const l = lead({ email: 'Info@Complain.ir' })
+  const twin = lead({ email: 'info@complain.ir ', status: 'negotiating' })
+  const client = makeClient({ leads: [l, twin] })
+  client.tables.email_provider_events = []
+  const messageId = await sentLead(client, l)
+  const result = await deliver(client, resendEvent('email.complained', messageId, 'Info@Complain.ir'))
+  assert.equal(result.leadsOptedOut, 2)
+  assert.ok(client.tables.sales_leads.every((x) => x.do_not_contact === true))
+  assert.equal(client.tables.email_outreach_recipients.find((r) => r.normalized_email === 'info@complain.ir').suppression_reason, 'complaint')
+})
+
+await check('send gate: a suppressed address is refused on a real send, whichever lead or path asks', async () => {
+  const other = lead({ email: 'sales@bounced.ir' })
+  const client = makeClient({
+    leads: [other],
+    recipients: [{ normalized_email: 'sales@bounced.ir', lead_id: 'old-lead', status: 'sent', suppressed_at: '2026-09-24T11:00:00Z', suppression_reason: 'hard_bounce', claimed_at: '2026-09-20T08:00:00Z' }],
+  })
+  client.tables.prospect_outreach_suggestions.push({ id: 'manual-1', lead_id: other.id, channel: 'email', status: 'approved', send_status: 'not_sent', message_final: 'متن', subject_draft: 'موضوع' })
+  await withResend({}, async (sent) => {
+    const result = await attemptSend(client, { suggestionId: 'manual-1', actorUserId: 'admin', testMode: false, credentials, now: noon })
+    assert.equal(result.ok, false)
+    assert.ok(result.reasons.some((r) => r.includes('برگشت خورده')))
+    assert.equal(sent.length, 0)
+  })
+  const gate = evaluateSendGate({ suggestion: { channel: 'email', status: 'approved', message_final: 'x' }, lead: other, settings: settings(), credentialsConfigured: true, emailSuppression: 'complaint', testMode: false, now: noon })
+  assert.ok(gate.reasons.some((r) => r.includes('هرزنامه')))
+})
+
+await check('webhook: an event for an address never auto-emailed is recorded so the address is never auto-emailed', async () => {
+  const l = lead({ email: 'owner@manual.ir' })
+  const client = makeClient({ leads: [l] })
+  client.tables.email_provider_events = []
+  await deliver(client, resendEvent('email.bounced', 'manual-msg', 'owner@manual.ir', { bounce: { type: 'Permanent' } }))
+  const recipient = client.tables.email_outreach_recipients.find((r) => r.normalized_email === 'owner@manual.ir')
+  assert.equal(recipient.status, 'sent')
+  assert.equal(recipient.suppression_reason, 'hard_bounce')
+  await withResend({}, async (sent) => {
+    await run(client)
+    assert.equal(sent.length, 0)
   })
 })
 

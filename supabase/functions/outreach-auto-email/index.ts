@@ -18,7 +18,6 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { runAutoEmailCycle } from '../../../src/outreach/autoEmailPipeline.js'
-import { fetchEmailDeliveryStatus } from '../../../src/outreach/providers/emailProvider.js'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
@@ -84,7 +83,6 @@ Deno.serve(async (req) => {
         email: EMAIL_API_KEY && EMAIL_FROM_ADDRESS ? { apiKey: EMAIL_API_KEY, fromAddress: EMAIL_FROM_ADDRESS, fromName: EMAIL_FROM_NAME, replyTo: EMAIL_REPLY_TO } : null,
       },
       testRecipients: { email: EMAIL_TEST_RECIPIENT || null },
-      fetchDeliveryStatus: EMAIL_API_KEY ? (id: string) => fetchEmailDeliveryStatus({ apiKey: EMAIL_API_KEY, providerMessageId: id }) : null,
     })
     const durationMs = Date.now() - startedAt
     // Counts go to the log; the full report (company names, outcomes) only
