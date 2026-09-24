@@ -4,7 +4,7 @@ import { isNonCompanyEntityType } from './entityClassification.js'
 import { scoreCandidate } from './scoringEngine.js'
 import { qualifyCandidate } from './qualification.js'
 import { isPromotableIdentity, isPlausibleOrganizationName, resolveVerifiedIdentity, IDENTITY_SOURCES } from './identityResolution.js'
-import { normalizedNameKey } from './normalization.js'
+import { normalizedNameKey, normalizeSearchText } from './normalization.js'
 import { lookupCompanyEmail, LOOKUP_LIMITS, visibleText } from '../outreach/emailDiscovery.js'
 
 // ---------------------------------------------------------------------------
@@ -69,6 +69,17 @@ export function isForeignLatinName(name, domain) {
 }
 
 const IRAN_SIGNAL = /[؀-ۿ]|\biran\b/i
+// Production data: «ماشین های پلاستیک بادی پارس», «ارائه دهنده انواع
+// دستگاه بسته بندی», "APS machine" - machine builders/sellers name the
+// machines in their own title; a processor does not.
+// Title only: a processor's DESCRIPTION may well mention its machines
+// («با ۵ خط تولید»), and «قالب سازی و تزریق» is an injection moulder.
+const MACHINERY_SELF_DESCRIPTION = /(ماشین|دستگاه|machine|machinery)/i
+// «ثبت شغل» and similar business-registration / listing sites.
+const LISTING_SELF_DESCRIPTION = /(ثبت شغل|ثبت مشاغل|ثبت کسب و کار|ثبت رایگان|دایرکتوری|راهنمای مشاغل)/
+// «فروش انواع پلی اتیلن صنعتی» - a raw-polymer seller neither makes nor
+// uses polymer products.
+const RAW_MATERIAL_TRADER = /(فروش|عرضه|واردات|وارد کننده|پخش|بازرگانی)\s+(انواع\s+)?(مواد اولیه|گرانول|پلی اتیلن|پلی پروپیلن|پلیمر|پی وی سی|pvc)/i
 
 // What the company's own homepage says about itself - never the search
 // snippet, which can describe a company a portal merely lists:
@@ -88,6 +99,12 @@ export function siteOwnSignals({ candidate, signals, homepageText = '' }) {
   if (isNonCompanyEntityType(matchedEntityType(pageEvidence))) reasons.push('site_not_company')
   if (!hasIndustryEvidence(pageEvidence) && !hasIndustryEvidence(bodyEvidence)) reasons.push('no_polymer_signal_on_site')
   if (!/\.ir$/i.test(candidate.domain || '') && !IRAN_SIGNAL.test(text)) reasons.push('not_iranian')
+  // What the site says it IS, from its own name/title/description only (a
+  // manufacturer's body text may well mention its machines or materials):
+  const selfDescription = normalizeSearchText([title, signals.description].filter(Boolean).join(' '))
+  if (MACHINERY_SELF_DESCRIPTION.test(normalizeSearchText(title))) reasons.push('machinery_seller')
+  if (LISTING_SELF_DESCRIPTION.test(selfDescription)) reasons.push('listing_site')
+  if (RAW_MATERIAL_TRADER.test(selfDescription)) reasons.push('raw_material_trader')
   return { ok: reasons.length === 0, reasons }
 }
 

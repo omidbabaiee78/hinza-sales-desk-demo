@@ -121,7 +121,7 @@ function normalizeForLatinCompare(text) {
 // same gotcha already documented on textMatching.js's COMPANY_SELF_ID_
 // PATTERNS and normalization.js's normalizedNameKey()).
 const GENERIC_TITLE_PREFIX_PATTERN =
-  /^(سایت\s*تولید|تولید\s*کننده|تولیدکننده|تولید|محصول(ات)?|خط\s*تولید|کارخانه\s*تولید|فروش|خرید|قیمت|صفحه\s*اصلی|درباره(\s*ما)?|معرفی|وب\s*سایت|وبسایت|خانه|لیست|فهرست|بهترین|برترین|راهنمای|عرضه|انواع|فروشگاه)/
+  /^(سایت\s*تولید|تولید\s*کننده|تولیدکننده|تولید|محصول(ات)?|خط\s*تولید|کارخانه\s*تولید|فروش|خرید|قیمت|صفحه\s*اصلی|درباره(\s*ما)?|معرفی|وب\s*سایت|وبسایت|خانه|لیست|فهرست|بهترین|برترین|راهنمای|عرضه|انواع|فروشگاه|ارائه\s*دهنده)/
 
 export function isPlausibleOrganizationName(name) {
   if (!name) return false

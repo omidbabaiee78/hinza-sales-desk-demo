@@ -3631,4 +3631,56 @@ await check('Phase 36: a manufacturer whose title names no product is still regi
   assert.equal(client.tables.sales_leads[0].company_name, 'راشا نمونه')
 })
 
+await check('Phase 36 (production case): machinery sellers, listing sites and raw-polymer traders are not registered; an injection moulder is', async () => {
+  const cases = [
+    [{ title: 'ماشین های پلاستیک بادی پارس', siteName: 'ماشین های پلاستیک بادی پارس', description: 'سازنده ماشین بادی برای تولید بطری پلاستیکی' }, 0],
+    [{ title: 'ثبت شغل', siteName: 'ثبت شغل', description: 'ثبت رایگان مشاغل تولیدی پلاستیک و کسب و کار' }, 0],
+    [{ title: 'شرکت مهربسپار شریف', siteName: 'شرکت مهربسپار شریف', description: 'فروش انواع پلی اتیلن صنعتی و گرانول برای تولید فیلم پلی اتیلن' }, 0],
+    [{ title: 'قالب سازی و تزریق پلاستیک البرز نمونه', siteName: 'تزریق پلاستیک البرز نمونه', description: 'تولید کننده قطعات پلاستیکی تزریقی با ۵ خط تولید و دستگاه تزریق' }, 1],
+  ]
+  for (const [page, expected] of cases) {
+    const client = makeFakeClient()
+    pendingCandidate(client, { raw_name: 'نمونه', canonical_name: 'نمونه', business_description: 'قطعات پلاستیکی' })
+    const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': sitePage({ ...page, body: 'info@sample-plast.ir' }) })
+    await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
+    assert.equal(client.tables.sales_leads.length, expected, page.title)
+  }
+})
+
+await check('Phase 36: on a server run a search result is registered only after its own site was read - never from the snippet alone', async () => {
+  const client = makeFakeClient()
+  const source = (
+    await client
+      .from('prospect_sources')
+      .insert({ name: 'serper defer', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 1, queryTemplates: ['فیلم'], locations: [''] } })
+      .select()
+      .single()
+  ).data
+  let run
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    // A snippet that qualifies a named manufacturer, and a homepage whose
+    // og:site_name the snippet-phase identity check (live fetch) accepts -
+    // exactly how a snippet-only promotion happened in production.
+    const portalHome = '<html><head><title>حباب باران</title><meta property="og:site_name" content="شرکت حباب باران"></head><body>x</body></html>'
+    mockFetch(async (url) =>
+      String(url).includes('serper')
+        ? serperResponse([{ title: 'شرکت حباب باران، تولیدکننده فیلم پلی اتیلن', link: 'https://portal-sample.ir/habab-baran/', snippet: 'شرکت حباب باران تولیدکننده فیلم پلی اتیلن و نایلون کشاورزی با کارخانه در شهرک صنعتی. تلفن 09121234567' }])
+        : { ok: true, status: 200, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'text/html' : null) }, text: async () => portalHome, body: null },
+    )
+    try {
+      run = await runDiscovery(client, {
+        sourceId: source.id,
+        runType: 'manual',
+        serverPhases: true,
+        search: async () => [],
+        fetchPage: async () => sitePage({ title: 'نیازمندیهای رایگان | سایت آگهی', siteName: 'پورتال نمونه', description: 'آگهی رایگان', body: 'x' }),
+      })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.equal(run.candidates_promoted, 0)
+  assert.equal(client.tables.sales_leads.length, 0, 'the portal page read afterwards shows it is not the company')
+})
+
 console.log(`\n${passed} check(s) passed.`)
