@@ -14,17 +14,22 @@ import './Prospecting.css'
 
 const PRIMARY_TAB_KEY = 'manual_review'
 
-const TABS = [
-  { key: 'top', label: 'پیشنهادهای برتر' },
-  { key: PRIMARY_TAB_KEY, label: 'نیازمند بررسی' },
+// Candidate lists shown as plain chips; run history and source settings are
+// technical and live under «ابزارهای بیشتر».
+const CANDIDATE_TABS = [
+  { key: PRIMARY_TAB_KEY, label: 'نیازمند بررسی شما' },
+  { key: 'promoted', label: 'ثبت‌شده به‌عنوان سرنخ' },
+  { key: 'top', label: 'مناسب، هنوز ثبت نشده' },
+  { key: 'duplicate', label: 'تکراری' },
   { key: 'rejected', label: 'رد شده' },
-  { key: 'duplicate', label: 'Duplicate' },
-  { key: 'promoted', label: 'واردشده به لیدها' },
-  { key: 'runs', label: 'اجراها' },
-  { key: 'sources', label: 'منابع' },
 ]
-
-const SECONDARY_TABS = TABS.filter((tab) => tab.key !== PRIMARY_TAB_KEY)
+const TOOL_TABS = [
+  { key: 'runs', label: 'تاریخچهٔ اجراها' },
+  { key: 'sources', label: 'منابع جست‌وجو' },
+]
+const TABS = [...CANDIDATE_TABS, ...TOOL_TABS]
+const TAB_KEYS = new Set(TABS.map((t) => t.key))
+const REVIEWED_STATUSES = new Set(['qualified', 'manual_review', 'rejected', 'duplicate', 'promoted'])
 
 // Phase 24, STEP 5 - a run's duration/trigger type/dry-run+budget usage are
 // all already recorded (prospect_discovery_runs.run_type/started_at/
@@ -47,7 +52,7 @@ function isToday(iso) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
 }
 
-export default function AdminProspectingPage() {
+export default function AdminProspectingPage({ initialTab }) {
   const {
     candidates,
     runs,
@@ -80,7 +85,7 @@ export default function AdminProspectingPage() {
     runPromoteEligibleCandidates,
   } = useProspecting()
 
-  const [activeTab, setActiveTab] = useState(PRIMARY_TAB_KEY)
+  const [activeTab, setActiveTab] = useState(TAB_KEYS.has(initialTab) ? initialTab : PRIMARY_TAB_KEY)
   const [uploading, setUploading] = useState(false)
   const [copyNotice, setCopyNotice] = useState('')
   const [verifyCopyNotice, setVerifyCopyNotice] = useState('')
@@ -145,15 +150,17 @@ export default function AdminProspectingPage() {
 
   const summary = useMemo(
     () => ({
-      checkedToday: candidates.filter((c) => isToday(c.created_at) || isToday(c.last_seen_at)).length,
+      found: candidates.length,
       newToday: candidates.filter((c) => isToday(c.created_at)).length,
-      qualified: candidates.filter((c) => c.status === 'qualified' || c.status === 'promoted').length,
+      reviewed: candidates.filter((c) => REVIEWED_STATUSES.has(c.status)).length,
       promoted: buckets.promoted.length,
       duplicates: buckets.duplicate.length,
       needsReview: buckets.manual_review.length,
+      rejected: buckets.rejected.length,
     }),
     [candidates, buckets],
   )
+  const lastRun = runs[0]
 
   async function handleUploadSubmit(rows) {
     setUploading(true)
@@ -172,63 +179,82 @@ export default function AdminProspectingPage() {
       <div className="page-toolbar">
         <div>
           <h2>کشف مشتری</h2>
-          <p className="today-subtitle">سیستم امروز چه مشتری‌های خوبی پیدا کرده؟</p>
+          <p className="today-subtitle">سیستم شرکت‌ها را پیدا و بررسی می‌کند و موارد مناسب را به‌عنوان سرنخ ثبت می‌کند. فهرست دستی هم می‌توانید اضافه کنید.</p>
         </div>
-        <button type="button" className="btn-primary" onClick={() => setUploading(true)}>
-          آپلود فهرست جدید
-        </button>
       </div>
 
       <ErrorBanner message={error} />
       {actionError && <ErrorBanner message={actionError} />}
       {actionNotice && <p className="lead-form-hint">{actionNotice}</p>}
 
+      <section className="lead-detail-card admin-upload-card">
+        <div>
+          <h3>آپلود فهرست دستی</h3>
+          <p className="lead-form-hint">فایل اکسل یا CSV شرکت‌ها را آپلود کنید. همان بررسی‌ها و حذف موارد تکراری روی این فهرست هم انجام می‌شود و فقط بعد از بررسی سایت، سرنخ ثبت می‌شود.</p>
+        </div>
+        <button type="button" className="btn-primary" onClick={() => setUploading(true)}>
+          آپلود فهرست جدید
+        </button>
+      </section>
+
+      <p className="lead-form-hint admin-status-line">
+        آخرین اجرای خودکار:{' '}
+        {lastRun
+          ? `${formatJalaliDateTime(lastRun.started_at)} · ${runStatusLabel(lastRun.status)} · ${lastRun.candidates_found} شرکت پیدا شد · ${
+              lastRun.summary?.dryRun ? 0 : lastRun.candidates_promoted
+            } سرنخ ثبت شد`
+          : loading
+            ? '...'
+            : 'هنوز اجرایی ثبت نشده است.'}
+      </p>
+
       <div className="today-summary-grid">
-        <div className="today-summary-card tone-contacted">
-          <span className="today-summary-value">{loading ? '—' : summary.checkedToday}</span>
-          <span className="today-summary-label">امروز چند شرکت بررسی شد</span>
-        </div>
-        <div className="today-summary-card tone-offer">
-          <span className="today-summary-value">{loading ? '—' : summary.newToday}</span>
-          <span className="today-summary-label">چند مورد جدید پیدا شد</span>
-        </div>
-        <div className="today-summary-card tone-won">
-          <span className="today-summary-value">{loading ? '—' : summary.qualified}</span>
-          <span className="today-summary-label">چند مورد واجد شرایط بود</span>
-        </div>
-        <div className="today-summary-card tone-won">
+        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
+          <span className="today-summary-value">{loading ? '—' : summary.found}</span>
+          <span className="today-summary-label">شرکت پیداشده (کل)</span>
+          <span className="admin-stat-hint">{loading ? '' : `${summary.newToday} مورد امروز`}</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
+          <span className="today-summary-value">{loading ? '—' : summary.reviewed}</span>
+          <span className="today-summary-label">بررسی‌شده توسط سیستم</span>
+          <span className="admin-stat-hint">شامل همهٔ موارد زیر</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-won" onClick={() => setActiveTab('promoted')}>
           <span className="today-summary-value">{loading ? '—' : summary.promoted}</span>
-          <span className="today-summary-label">چند مورد وارد بانک مشتری شد</span>
-        </div>
-        <div className="today-summary-card tone-contacted">
+          <span className="today-summary-label">ثبت‌شده به‌عنوان سرنخ</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab('duplicate')}>
           <span className="today-summary-value">{loading ? '—' : summary.duplicates}</span>
-          <span className="today-summary-label">چند Duplicate بود</span>
-        </div>
-        <div className="today-summary-card tone-lost">
+          <span className="today-summary-label">تکراری</span>
+          <span className="admin-stat-hint">دوباره ثبت نشد</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-offer" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
           <span className="today-summary-value">{loading ? '—' : summary.needsReview}</span>
-          <span className="today-summary-label">چند مورد نیازمند بررسی است</span>
-        </div>
+          <span className="today-summary-label">نیازمند بررسی شما</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-lost" onClick={() => setActiveTab('rejected')}>
+          <span className="today-summary-value">{loading ? '—' : summary.rejected}</span>
+          <span className="today-summary-label">رد شده</span>
+          <span className="admin-stat-hint">نامناسب (مثلاً فروشنده یا فهرست آگهی)</span>
+        </button>
       </div>
 
-      {/* Primary workflow actions - always visible, not gated behind a tab.
-          These are the 3 actions an admin actually needs day-to-day; every
-          other diagnostic/secondary tool moved into the collapsible panel
-          below (see "prospecting-more-panel"). */}
-      {!loading && (
-        <div className="prospecting-primary-actions">
-          <button type="button" className="btn-secondary" disabled={reEvaluatingAll} onClick={reEvaluateAllManualReview}>
-            {reEvaluatingAll ? 'در حال ارزیابی مجدد...' : 'ارزیابی مجدد همه موارد نیازمند بررسی'}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary prospecting-promote-btn"
-            disabled={promoteEligibleLoading}
-            onClick={handlePromoteEligibleClick}
-          >
-            {promoteEligibleLoading ? 'در حال تبدیل نامزدهای واجد شرایط به سرنخ...' : 'تبدیل گروهی نامزدهای واجد شرایط به سرنخ'}
-          </button>
+      <p className="admin-note">
+        این عددها هم‌پوشانی دارند و نباید با هم جمع شوند: «بررسی‌شده» شامل ثبت‌شده، تکراری، نیازمند بررسی و ردشده است. «شرکت پیداشده» نتیجهٔ جست‌وجوست و با تعداد
+        سرنخ‌ها یکی نیست؛ فقط موارد «ثبت‌شده به‌عنوان سرنخ» وارد فهرست سرنخ‌ها می‌شوند.
+      </p>
+
+      <div className="today-filters">
+        <div className="today-filter-group">
+          {CANDIDATE_TABS.map((tab) => (
+            <button key={tab.key} type="button" className={`today-chip${activeTab === tab.key ? ' active' : ''}`} onClick={() => setActiveTab(tab.key)}>
+              {tab.label}
+              {!loading && buckets[tab.key] ? ` (${buckets[tab.key].length})` : ''}
+            </button>
+          ))}
         </div>
-      )}
+        {TOOL_TABS.some((t) => t.key === activeTab) && <p className="prospecting-current-view-note">نمای فعلی: {activeTabLabel}</p>}
+      </div>
 
       {!loading && promoteEligibleResult && (
         <div className="prospect-evidence-box prospecting-primary-result">
@@ -254,13 +280,13 @@ export default function AdminProspectingPage() {
       {/* Secondary / diagnostic tools + the less-used queue views - tucked
           away behind one collapsible panel so they don't compete for
           attention with the primary workflow above. */}
-      <details className="prospecting-more-panel">
-        <summary>ابزارها و نماهای بیشتر</summary>
+      <details className="prospecting-more-panel admin-more-tools" open={TOOL_TABS.some((t) => t.key === activeTab) || undefined}>
+        <summary>ابزارهای بیشتر (تاریخچه، منابع، ابزارهای گروهی و تشخیصی)</summary>
 
         <div className="prospecting-more-section">
-          <p className="prospecting-more-section-title">نماهای دیگر</p>
+          <p className="prospecting-more-section-title">تاریخچه و منابع</p>
           <div className="today-filter-group">
-            {SECONDARY_TABS.map((tab) => (
+            {TOOL_TABS.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
@@ -273,8 +299,22 @@ export default function AdminProspectingPage() {
           </div>
         </div>
 
+        {!loading && (
+          <div className="prospecting-more-section">
+            <p className="prospecting-more-section-title">کارهای گروهی (روی دادهٔ واقعی اثر دارند)</p>
+            <div className="prospecting-primary-actions">
+              <button type="button" className="btn-secondary" disabled={reEvaluatingAll} onClick={reEvaluateAllManualReview}>
+                {reEvaluatingAll ? 'در حال ارزیابی مجدد...' : 'ارزیابی مجدد همه موارد نیازمند بررسی'}
+              </button>
+              <button type="button" className="btn-secondary prospecting-promote-btn" disabled={promoteEligibleLoading} onClick={handlePromoteEligibleClick}>
+                {promoteEligibleLoading ? 'در حال تبدیل نامزدهای واجد شرایط به سرنخ...' : 'تبدیل گروهی نامزدهای واجد شرایط به سرنخ'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="prospecting-more-section">
-          <p className="prospecting-more-section-title">ابزارهای Smart Qualification 2.0</p>
+          <p className="prospecting-more-section-title">ابزارهای تشخیصی (بدون تغییر در داده)</p>
           <div className="today-filter-group">
             {/* Dry run: calculates what Smart Qualification 2.0 WOULD do to
                 every current manual_review candidate WITHOUT writing
@@ -385,23 +425,6 @@ export default function AdminProspectingPage() {
         </div>
       </details>
 
-      <div className="today-filters">
-        <div className="today-filter-group">
-          <button
-            type="button"
-            className={`today-chip${activeTab === PRIMARY_TAB_KEY ? ' active' : ''}`}
-            onClick={() => setActiveTab(PRIMARY_TAB_KEY)}
-          >
-            {TABS.find((tab) => tab.key === PRIMARY_TAB_KEY)?.label}
-          </button>
-        </div>
-        {activeTab !== PRIMARY_TAB_KEY && (
-          <p className="prospecting-current-view-note">
-            نمای فعلی: {activeTabLabel}
-          </p>
-        )}
-      </div>
-
       {loading && <p className="profile-empty">در حال بارگذاری...</p>}
 
       {!loading && activeTab !== 'runs' && activeTab !== 'sources' && visibleCandidates.length === 0 && (
@@ -427,8 +450,8 @@ export default function AdminProspectingPage() {
               <th>وضعیت</th>
               <th>یافت‌شده</th>
               <th>جدید</th>
-              <th>واردشده به لیدها</th>
-              <th>Duplicate</th>
+              <th>ثبت‌شده به‌عنوان سرنخ</th>
+              <th>تکراری</th>
               <th>خطا</th>
               <th>درخواست خارجی</th>
               <th>مدت</th>

@@ -15,7 +15,7 @@ import '../today/Today.css'
 const FILTERS = [
   { key: 'all', label: 'همه' },
   { key: 'contact', label: 'دارای اطلاعات تماس' },
-  { key: 'waiting', label: 'منتظر پیکربندی سرویس' },
+  { key: 'waiting', label: 'منتظر راه‌اندازی سرویس' },
   { key: 'sent', label: 'ارسال‌شده' },
   { key: 'problem', label: 'ناموفق / برگشتی / لغو' },
   { key: 'none', label: 'بدون اطلاعات تماس' },
@@ -31,10 +31,10 @@ function matchesFilter(row, filter) {
   return true
 }
 
-export default function ChannelOutreachPage({ onOpenLead }) {
+export default function ChannelOutreachPage({ onOpenLead, initialFilter }) {
   const c = useChannelOutreach()
   const email = useEmailOutreach()
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState(FILTERS.some((f) => f.key === initialFilter) ? initialFilter : 'all')
 
   const rows = useMemo(() => {
     const emailByLead = new Map(email.entries.map((e) => [e.lead.id, e]))
@@ -43,6 +43,12 @@ export default function ChannelOutreachPage({ onOpenLead }) {
   const shown = rows.filter((r) => matchesFilter(r, filter))
   const lastRun = c.runs?.[0]
   const readiness = lastRun?.report?.readiness || null
+  const sentOn = (channel) => (c.counts[channel]?.sent || 0) + (c.counts[channel]?.delivered || 0)
+  const waitingOn = (channel) => c.counts[channel]?.not_configured || 0
+  const providerLine = (channel, label, enabled) =>
+    enabled
+      ? `${label}: سرویس روشن است · ${sentOn(channel)} پیام ارسال شده`
+      : `${label}: سرویس هنوز راه‌اندازی نشده · ${sentOn(channel)} پیام ارسال شده`
 
   function refresh() {
     c.refresh()
@@ -54,22 +60,26 @@ export default function ChannelOutreachPage({ onOpenLead }) {
       <div className="page-toolbar">
         <div>
           <h2>وضعیت کانال‌ها</h2>
-          <p className="today-subtitle">
-            برای هر سرنخ ثبت‌شده (دستی، فهرست آپلودشده پس از ثبت، یا کشف خودکار): ایمیل، واتساپ و بله. پیام معرفی خودکار است؛ برای هر مقصد در هر کانال فقط یک‌بار.
-          </p>
+          <p className="today-subtitle">برای هر سرنخ ثبت‌شده، وضعیت ایمیل، واتساپ و بله کنار هم. فقط نمایش است؛ از این صفحه پیامی ارسال نمی‌شود.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn-secondary" disabled={c.loading || c.running} onClick={refresh}>
-            به‌روزرسانی
-          </button>
-          <button type="button" className="btn-secondary" disabled={c.loading || c.running || c.notInstalled} onClick={c.runNow} title="اطلاعات تماس را ثبت می‌کند؛ ارسال فقط وقتی سرویس کانال پیکربندی شده باشد.">
-            {c.running ? 'در حال اجرا...' : 'اجرای اکنون (واتساپ/بله)'}
-          </button>
-        </div>
+        <button type="button" className="btn-secondary" disabled={c.loading || c.running} onClick={refresh}>
+          به‌روزرسانی
+        </button>
       </div>
 
+      <section className="lead-detail-card admin-channel-plain">
+        <p className="admin-status-line">
+          {c.loading ? 'در حال بارگذاری...' : providerLine('whatsapp', 'واتساپ', c.settings?.whatsapp_provider_enabled)}
+        </p>
+        <p className="admin-status-line">{c.loading ? '' : providerLine('bale', 'بله', c.settings?.bale_provider_enabled)}</p>
+        <p className="lead-form-hint">
+          تا وقتی سرویس یک کانال راه‌اندازی و روشن نشده، هیچ پیامی از آن کانال ارسال نمی‌شود. شماره‌ها فقط ثبت می‌شوند تا بعداً قابل استفاده باشند. ایمیل جداگانه و
+          خودکار ارسال می‌شود (صفحهٔ «ایمیل‌ها»).
+        </p>
+      </section>
+
       <ErrorBanner message={c.error || email.error} onRetry={refresh} />
-      {c.notInstalled && <ErrorBanner message="جدول‌های صف واتساپ/بله هنوز در پایگاه داده ساخته نشده‌اند (phase34_channel_outreach.sql). وضعیت‌ها فقط بر اساس اطلاعات تماس نمایش داده می‌شوند." />}
+      {c.notInstalled && <ErrorBanner message="بخش واتساپ/بله هنوز در سیستم فعال نشده است؛ وضعیت‌ها فقط بر اساس اطلاعات تماس نمایش داده می‌شوند." />}
       {c.runReport && !c.runReport.ok && <ErrorBanner message="اجرا انجام نشد یا نتیجه آن معلوم نیست." />}
 
       <div className="today-summary-grid">
@@ -82,38 +92,53 @@ export default function ChannelOutreachPage({ onOpenLead }) {
           <span className="today-summary-label">دارای اطلاعات تماس</span>
         </div>
         <div className="today-summary-card tone-won">
-          <span className="today-summary-value">{(c.counts.whatsapp?.sent || 0) + (c.counts.whatsapp?.delivered || 0)}</span>
+          <span className="today-summary-value">{sentOn('whatsapp')}</span>
           <span className="today-summary-label">واتساپ ارسال‌شده</span>
         </div>
         <div className="today-summary-card tone-won">
-          <span className="today-summary-value">{(c.counts.bale?.sent || 0) + (c.counts.bale?.delivered || 0)}</span>
+          <span className="today-summary-value">{sentOn('bale')}</span>
           <span className="today-summary-label">بله ارسال‌شده</span>
         </div>
-        <div className="today-summary-card tone-offer">
-          <span className="today-summary-value">{c.counts.waitingProvider || 0}</span>
-          <span className="today-summary-label">واتساپ/بله منتظر پیکربندی سرویس</span>
-        </div>
+        <button type="button" className="today-summary-card admin-stat tone-offer" onClick={() => setFilter('waiting')}>
+          <span className="today-summary-value">{waitingOn('whatsapp')}</span>
+          <span className="today-summary-label">واتساپ: منتظر راه‌اندازی سرویس</span>
+        </button>
+        <button type="button" className="today-summary-card admin-stat tone-offer" onClick={() => setFilter('waiting')}>
+          <span className="today-summary-value">{waitingOn('bale')}</span>
+          <span className="today-summary-label">بله: منتظر راه‌اندازی سرویس</span>
+        </button>
         <div className="today-summary-card tone-lost">
           <span className="today-summary-value">{(c.counts.whatsapp?.failed || 0) + (c.counts.bale?.failed || 0) + (c.counts.whatsapp?.uncertain || 0) + (c.counts.bale?.uncertain || 0)}</span>
           <span className="today-summary-label">واتساپ/بله ناموفق یا نامشخص</span>
         </div>
       </div>
 
-      <section className="lead-detail-card" style={{ marginTop: 12 }}>
-        <h3>سرویس‌های ارسال</h3>
-        <p className="lead-form-hint">
-          واتساپ: {c.settings?.whatsapp_provider_enabled ? 'روشن در تنظیمات' : 'خاموش'}
-          {readiness?.whatsapp?.length ? ` — آماده نیست: ${readiness.whatsapp.map((r) => READINESS_REASON_LABELS[r] || r).join('، ')}` : readiness ? ' — آماده ارسال' : ''}
-        </p>
-        <p className="lead-form-hint">
-          بله: {c.settings?.bale_provider_enabled ? 'روشن در تنظیمات' : 'خاموش'}
-          {readiness?.bale?.length ? ` — آماده نیست: ${readiness.bale.map((r) => READINESS_REASON_LABELS[r] || r).join('، ')}` : readiness ? ' — آماده ارسال' : ''}
-        </p>
-        <p className="lead-form-hint">
-          تا وقتی سرویس یک کانال پیکربندی و روشن نشده، هیچ پیامی در آن کانال ارسال نمی‌شود و وضعیت «کانال پیکربندی نشده» است. لینک یا پیش‌نویس آماده‌شده به‌معنای ارسال نیست.
-        </p>
-        <p className="lead-form-hint">آخرین اجرای واتساپ/بله: {lastRun ? `${formatJalaliDateTime(lastRun.started_at)} · ثبت ${lastRun.registered} · ارسال ${lastRun.sent} · ناموفق ${lastRun.failed}` : 'هنوز اجرایی ثبت نشده است.'}</p>
-      </section>
+      <p className="admin-note">
+        عددهای «منتظر راه‌اندازی» برای هر کانال جداگانه شمرده می‌شوند: شرکتی که هم واتساپ و هم بله دارد در هر دو شمرده می‌شود. به همین دلیل جمع این عددها می‌تواند
+        از تعداد سرنخ‌ها بیشتر باشد. عددهای این صفحه را با عددهای «کشف مشتری» جمع نکنید.
+      </p>
+
+      <details className="admin-more-tools">
+        <summary>ابزارهای بیشتر (جزئیات سرویس و اجرای دستی)</summary>
+        <section className="lead-detail-card">
+          <p className="lead-form-hint">
+            واتساپ: {c.settings?.whatsapp_provider_enabled ? 'روشن در تنظیمات' : 'خاموش'}
+            {readiness?.whatsapp?.length ? ` — آماده نیست: ${readiness.whatsapp.map((r) => READINESS_REASON_LABELS[r] || r).join('، ')}` : readiness ? ' — آماده ارسال' : ''}
+          </p>
+          <p className="lead-form-hint">
+            بله: {c.settings?.bale_provider_enabled ? 'روشن در تنظیمات' : 'خاموش'}
+            {readiness?.bale?.length ? ` — آماده نیست: ${readiness.bale.map((r) => READINESS_REASON_LABELS[r] || r).join('، ')}` : readiness ? ' — آماده ارسال' : ''}
+          </p>
+          <p className="lead-form-hint">
+            آخرین اجرای واتساپ/بله: {lastRun ? `${formatJalaliDateTime(lastRun.started_at)} · ثبت ${lastRun.registered} · ارسال ${lastRun.sent} · ناموفق ${lastRun.failed}` : 'هنوز اجرایی ثبت نشده است.'}
+          </p>
+          <div className="admin-tools-actions">
+            <button type="button" className="btn-secondary" disabled={c.loading || c.running || c.notInstalled} onClick={c.runNow}>
+              {c.running ? 'در حال اجرا...' : 'اجرای اکنون (واتساپ/بله) — فقط ثبت اطلاعات تماس تا وقتی سرویس‌ها خاموش‌اند'}
+            </button>
+          </div>
+        </section>
+      </details>
 
       <div className="today-filters">
         <div className="today-filter-group">
