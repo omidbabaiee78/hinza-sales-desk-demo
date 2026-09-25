@@ -32,7 +32,7 @@ const QUICK_ACTIVITY_BUTTONS = [
   { type: 'followup', label: 'ثبت پیگیری' },
 ]
 
-export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) {
+export default function AdminLeadDetailPage({ leadId, onBack, backLabel = 'بازگشت', onOpenCustomer }) {
   const { lead, products, activities, samples, loading, error, refresh } = useLeadDetail(leadId)
   const { leads } = useSalesLeads()
   const { companies } = useCompanyDirectory()
@@ -43,8 +43,17 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
   const [sampleNotice, setSampleNotice] = useState('')
 
   if (loading) return <LoadingScreen text="در حال بارگذاری سرنخ..." />
-  if (error) return <ErrorBanner message={error} onRetry={refresh} />
-  if (!lead) return null
+  if (error || !lead)
+    return (
+      <div className="lead-detail">
+        <div className="page-toolbar">
+          <button type="button" className="btn-secondary" onClick={onBack}>
+            → {backLabel}
+          </button>
+        </div>
+        {error ? <ErrorBanner message={error} onRetry={refresh} /> : <p className="profile-empty">این سرنخ پیدا نشد.</p>}
+      </div>
+    )
 
   const isTerminal = lead.status === 'converted' || lead.status === 'lost'
   const assignedAdmin = admins.find((a) => a.id === lead.assigned_to)
@@ -73,7 +82,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, onOpenCustomer }) 
     <div className="lead-detail">
       <div className="page-toolbar">
         <button type="button" className="btn-secondary" onClick={onBack}>
-          بازگشت
+          → {backLabel}
         </button>
         <h2>
           {lead.company_name || lead.contact_name} <LeadStatusBadge status={lead.status} />

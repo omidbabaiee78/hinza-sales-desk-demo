@@ -23,101 +23,67 @@ import ChannelOutreachPage from './outreach/ChannelOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 import AdminProspectingPage from './prospecting/AdminProspectingPage'
 import AdminMissionPage from './AdminMissionPage'
+import AdminSectionNav from './AdminSectionNav'
+import { GROUPS, GROUPS_BY_KEY, GROUP_OF_KEY, PAGE_LABELS, routeFromPathname } from './adminSections'
 import './today/Today.css'
 import './AdminNavGroups.css'
 
-// Keep the demo focused on discovery, first contact and recording outcomes.
-// Legacy pages remain directly accessible at their old URLs, but are not
-// displayed in the primary navigation.
-const GROUPS = [
-  { key: 'home', label: 'نمای کار' },
-  { key: 'prospecting', label: 'کشف مشتری' },
-  { key: 'leads', label: 'سرنخ‌ها' },
-  {
-    key: 'contact',
-    label: 'ارتباط اولیه',
-    defaultKey: 'outreach',
-    tabs: [
-      { key: 'outreach', label: 'ایمیل‌ها' },
-      { key: 'channels', label: 'وضعیت کانال‌ها (ایمیل، واتساپ، بله)' },
-      { key: 'replies', label: 'نتیجهٔ ارتباط' },
-    ],
-  },
-]
+// Menu, breadcrumbs and Previous/Next come from adminSections.js. Legacy
+// pages remain directly accessible at their old URLs and from «ابزارهای
+// بیشتر» on the overview, but are not displayed in the primary navigation.
 
-const GROUPS_BY_KEY = new Map(GROUPS.map((g) => [g.key, g]))
-
-const GROUP_OF_KEY = (() => {
-  const map = { dashboard: 'home', today: 'home' }
-  for (const group of GROUPS) {
-    map[group.key] = group.key
-    for (const tab of group.tabs || []) map[tab.key] = group.key
-  }
-  return map
-})()
-
-const ALL_VALID_KEYS = new Set([
-  'home',
-  'dashboard',
-  'today',
-  'automation',
-  'outreach',
-  'channels',
-  'replies',
-  'prospecting',
-  'registrationRequests',
-  'customers',
-  'crm',
-  'leads',
-  'orders',
-  'products',
-  'invoices',
-  'payments',
-  'followUps',
-  'reports',
-])
-
-// 'payments' has never had its own dedicated page (same as before this
-// cleanup) - PlaceholderSection is what it has always rendered.
+// 'payments' has never had its own dedicated page - PlaceholderSection is
+// what it has always rendered.
 const PLACEHOLDER_TITLES = {
   payments: 'پرداخت‌ها',
 }
 
 const SIDEBAR_ITEMS = GROUPS.map((g) => ({ key: g.key, label: g.label }))
 
-// Maps a URL like /admin/outreach to its activeKey - so every admin page is
-// still a real, bookmarkable/deep-linkable route, exactly as before. An
-// unrecognized or bare /admin path now falls back to 'home' (previously
-// 'dashboard') - the new operational starting point.
-function keyFromPathname(pathname) {
-  const match = /^\/admin\/([a-zA-Z]+)/.exec(pathname || '')
-  const key = match ? match[1] : 'home'
-  return ALL_VALID_KEYS.has(key) ? key : 'home'
+function scrollToTop() {
+  try {
+    window.scrollTo(0, 0)
+  } catch {
+    // non-browser environment
+  }
 }
 
 export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }) {
-  const [activeKey, setActiveKey] = useState(() => keyFromPathname(pathname))
+  const [activeKey, setActiveKey] = useState(() => routeFromPathname(pathname).key)
   const [selectedOrderId, setSelectedOrderId] = useState(null)
   const [selectedInvoiceId, setSelectedInvoiceId] = useState(null)
   const [selectedCustomerId, setSelectedCustomerId] = useState(null)
-  const [selectedLeadId, setSelectedLeadId] = useState(null)
+  const [selectedLeadId, setSelectedLeadId] = useState(() => routeFromPathname(pathname).leadId)
+  // Where «بازگشت» on a lead page goes: the page the lead was opened from.
+  // Opened inside the app -> browser history (keeps that page's tab);
+  // opened from a bookmark/link -> the leads list.
+  const [leadReturnKey, setLeadReturnKey] = useState('leads')
+  const [leadOpenedInApp, setLeadOpenedInApp] = useState(false)
+  // Optional tab to open on the destination page (e.g. an overview number
+  // linking straight to the bounced emails).
+  const [pageTab, setPageTab] = useState(null)
 
-  // Keeps activeKey in sync with browser back/forward navigation - adjusting
-  // state during render (React's documented pattern for "state derived from
-  // a prop") rather than in a useEffect, which would cause an extra render.
+  // Keeps the page (and an open lead, /admin/leads/<id>) in sync with
+  // browser back/forward - adjusting state during render (React's
+  // documented pattern for "state derived from a prop") rather than in a
+  // useEffect, which would cause an extra render.
   const [syncedPathname, setSyncedPathname] = useState(pathname)
   if (pathname !== syncedPathname) {
+    const route = routeFromPathname(pathname)
     setSyncedPathname(pathname)
-    setActiveKey(keyFromPathname(pathname))
+    setActiveKey(route.key)
+    setSelectedLeadId(route.leadId)
   }
 
-  function navigate(key) {
+  function navigate(key, options = {}) {
     setActiveKey(key)
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
     setSelectedCustomerId(null)
     setSelectedLeadId(null)
+    setPageTab(options.tab || null)
     onNavigateUrl?.(`/admin/${key}`)
+    scrollToTop()
   }
 
   function navigateToGroup(groupKey) {
@@ -126,6 +92,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
   }
 
   function openInvoice(invoiceId) {
+    onNavigateUrl?.('/admin/invoices')
     setActiveKey('invoices')
     setSelectedOrderId(null)
     setSelectedCustomerId(null)
@@ -133,6 +100,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
   }
 
   function openOrder(orderId) {
+    onNavigateUrl?.('/admin/orders')
     setActiveKey('orders')
     setSelectedInvoiceId(null)
     setSelectedCustomerId(null)
@@ -140,6 +108,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
   }
 
   function openCustomer(companyId) {
+    onNavigateUrl?.('/admin/customers')
     setActiveKey('customers')
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
@@ -148,14 +117,18 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
   }
 
   function openLead(leadId) {
+    setLeadReturnKey(activeKey === 'leads' || !PAGE_LABELS[activeKey] ? 'leads' : activeKey)
+    setLeadOpenedInApp(true)
     setActiveKey('leads')
     setSelectedOrderId(null)
     setSelectedInvoiceId(null)
     setSelectedCustomerId(null)
     setSelectedLeadId(leadId)
+    onNavigateUrl?.(`/admin/leads/${leadId}`)
+    scrollToTop()
   }
 
-  const activeGroupKey = GROUP_OF_KEY[activeKey] || 'home'
+  const activeGroupKey = GROUP_OF_KEY[activeKey] || null
   const activeGroup = GROUPS_BY_KEY.get(activeGroupKey)
 
   return (
@@ -169,23 +142,21 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
       userLabel={profile.full_name || profile.phone}
       onSignOut={onSignOut}
     >
+      <AdminSectionNav activeKey={activeKey} detailLabel={activeKey === 'leads' && selectedLeadId ? 'جزئیات سرنخ' : null} onNavigate={navigate} />
+
       {activeGroup?.tabs && (
-        <nav className="admin-hub-subnav" aria-label="بخش‌های پنل">
-          {activeGroup.tabs.filter((tab) => !tab.advanced).map((tab) => (
-            <button key={tab.key} type="button" className={`today-chip${activeKey === tab.key ? ' active' : ''}`} onClick={() => navigate(tab.key)}>
+        <nav className="admin-hub-subnav" aria-label={activeGroup.label}>
+          {activeGroup.tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`today-chip${activeKey === tab.key ? ' active' : ''}`}
+              aria-current={activeKey === tab.key ? 'page' : undefined}
+              onClick={() => navigate(tab.key)}
+            >
               {tab.label}
             </button>
           ))}
-          {activeGroup.tabs.some((tab) => tab.advanced) && (
-            <details className="admin-hub-more" key={activeGroup.key} open={activeGroup.tabs.some((tab) => tab.advanced && tab.key === activeKey) || undefined}>
-              <summary>بخش‌های دیگر</summary>
-              <div className="admin-hub-more-links">
-                {activeGroup.tabs.filter((tab) => tab.advanced).map((tab) => (
-                  <button key={tab.key} type="button" className={`today-chip${activeKey === tab.key ? ' active' : ''}`} onClick={() => navigate(tab.key)}>{tab.label}</button>
-                ))}
-              </div>
-            </details>
-          )}
         </nav>
       )}
 
@@ -214,10 +185,10 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
           onOpenInvoice={openInvoice}
         />
       )}
-      {activeKey === 'outreach' && <EmailOutreachPage onOpenLead={openLead} />}
-      {activeKey === 'channels' && <ChannelOutreachPage onOpenLead={openLead} />}
+      {activeKey === 'outreach' && <EmailOutreachPage key={pageTab || 'default'} initialTab={pageTab} onOpenLead={openLead} />}
+      {activeKey === 'channels' && <ChannelOutreachPage key={pageTab || 'default'} initialFilter={pageTab} onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
-      {activeKey === 'prospecting' && <AdminProspectingPage />}
+      {activeKey === 'prospecting' && <AdminProspectingPage key={pageTab || 'default'} initialTab={pageTab} />}
       {activeKey === 'registrationRequests' && <RegistrationRequestsPage />}
       {activeKey === 'orders' &&
         (selectedOrderId ? (
@@ -263,8 +234,10 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
       {activeKey === 'leads' &&
         (selectedLeadId ? (
           <AdminLeadDetailPage
+            key={selectedLeadId}
             leadId={selectedLeadId}
-            onBack={() => setSelectedLeadId(null)}
+            backLabel={`بازگشت به ${leadOpenedInApp ? PAGE_LABELS[leadReturnKey] || 'سرنخ‌ها' : 'سرنخ‌ها'}`}
+            onBack={() => (leadOpenedInApp ? window.history.back() : navigate('leads'))}
             onOpenCustomer={openCustomer}
           />
         ) : (
