@@ -89,7 +89,7 @@ export default function AdminTodayPage({ onOpenLead, onOpenOrder, onOpenInvoice,
     onOpenCustomer,
     onQuickFollowUp: setQuickFollowUpLeadId,
     onRefresh: refresh,
-    onOpenSmartSuggestions: () => onNavigate('crm'),
+    onOpenSmartSuggestions: () => onNavigate('crmAdvanced'),
     onOpenOutreach: () => onNavigate('outreach'),
     suggestionActions: smartSuggestions,
   }

@@ -17,6 +17,7 @@ export const GROUPS = [
       { key: 'replies', label: 'نتیجهٔ ارتباط' },
     ],
   },
+  { key: 'crm', label: 'CRM' },
 ]
 
 // Linear order of the pages for Previous/Next.
@@ -27,17 +28,23 @@ export const FLOW = GROUPS.flatMap((group) =>
 // Older pages and technical tools: still reachable at their old URLs and
 // from «ابزارهای بیشتر», but not part of the main menu.
 export const MORE_TOOLS = [
-  { key: 'automation', label: 'قوانین خودکار و وظایف' },
-  { key: 'today', label: 'کارهای امروز (نمای قدیمی)' },
-  { key: 'dashboard', label: 'داشبورد فروش (نمای قدیمی)' },
-  { key: 'crm', label: 'مدیریت ارتباط با مشتری' },
-  { key: 'customers', label: 'مشتریان' },
   { key: 'registrationRequests', label: 'درخواست‌های ثبت‌نام' },
   { key: 'orders', label: 'سفارش‌ها' },
   { key: 'products', label: 'محصولات' },
   { key: 'invoices', label: 'فاکتورها' },
   { key: 'payments', label: 'پرداخت‌ها' },
+]
+
+// The older, advanced CRM pages. Hidden from every menu (the simple CRM at
+// /admin/crm replaces them for now) but kept intact: their URLs still work
+// and nothing behind them was removed.
+export const HIDDEN_TOOLS = [
+  { key: 'crmAdvanced', label: 'مدیریت ارتباط با مشتری (پیشرفته)' },
+  { key: 'customers', label: 'مشتریان' },
   { key: 'followUps', label: 'پیگیری‌ها' },
+  { key: 'automation', label: 'قوانین خودکار و وظایف' },
+  { key: 'today', label: 'کارهای امروز (نمای قدیمی)' },
+  { key: 'dashboard', label: 'داشبورد فروش (نمای قدیمی)' },
   { key: 'reports', label: 'گزارش‌ها' },
 ]
 
@@ -52,9 +59,9 @@ export const GROUP_OF_KEY = (() => {
   return map
 })()
 
-export const PAGE_LABELS = Object.fromEntries([...FLOW, ...MORE_TOOLS].map((p) => [p.key, p.label]))
+export const PAGE_LABELS = Object.fromEntries([...FLOW, ...MORE_TOOLS, ...HIDDEN_TOOLS].map((p) => [p.key, p.label]))
 
-export const ALL_VALID_KEYS = new Set([...FLOW.map((p) => p.key), ...MORE_TOOLS.map((p) => p.key)])
+export const ALL_VALID_KEYS = new Set([...FLOW, ...MORE_TOOLS, ...HIDDEN_TOOLS].map((p) => p.key))
 
 // /admin/<key>  or  /admin/leads/<leadId>
 export function routeFromPathname(pathname) {

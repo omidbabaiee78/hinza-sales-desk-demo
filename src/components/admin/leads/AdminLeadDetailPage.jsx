@@ -32,7 +32,7 @@ const QUICK_ACTIVITY_BUTTONS = [
   { type: 'followup', label: 'ثبت پیگیری' },
 ]
 
-export default function AdminLeadDetailPage({ leadId, onBack, backLabel = 'بازگشت', onOpenCustomer }) {
+export default function AdminLeadDetailPage({ leadId, onBack, backLabel = 'بازگشت', onOpenCustomer, onAddToCrm }) {
   const { lead, products, activities, samples, loading, error, refresh } = useLeadDetail(leadId)
   const { leads } = useSalesLeads()
   const { companies } = useCompanyDirectory()
@@ -94,6 +94,7 @@ export default function AdminLeadDetailPage({ leadId, onBack, backLabel = 'با�
         <LeadQuickContact phone={lead.mobile || lead.phone} />
         {!isTerminal && <button type="button" className="btn-primary" onClick={() => setActiveModal('phone')}>ثبت نتیجه تماس و پیگیری بعدی</button>}
         <button type="button" className="btn-secondary" onClick={() => setActiveModal('edit')}>ویرایش اطلاعات</button>
+        {onAddToCrm && <button type="button" className="btn-secondary" onClick={() => onAddToCrm(lead.id)}>افزودن به CRM</button>}
         <button type="button" className="btn-secondary" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((value) => !value)}>
           {showAdvanced ? 'بستن گزینه‌های بیشتر' : 'گزینه‌های بیشتر'}
         </button>

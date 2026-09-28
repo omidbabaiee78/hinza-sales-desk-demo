@@ -13,6 +13,7 @@ import AdminCustomersPage from './AdminCustomersPage'
 import AdminCustomerDetail from './AdminCustomerDetail'
 import AdminFollowUpsPage from './AdminFollowUpsPage'
 import AdminCrmPage from './AdminCrmPage'
+import SimpleCrmPage from './crm/SimpleCrmPage'
 import AdminReportsPage from './reports/AdminReportsPage'
 import AdminLeadsPage from './leads/AdminLeadsPage'
 import AdminLeadDetailPage from './leads/AdminLeadDetailPage'
@@ -187,7 +188,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
         />
       )}
       {activeKey === 'outreach' && <EmailOutreachPage key={pageTab || 'default'} initialTab={pageTab} onOpenLead={openLead} />}
-      {activeKey === 'manualOutreach' && <ManualOutreachPage onOpenLead={openLead} />}
+      {activeKey === 'manualOutreach' && <ManualOutreachPage onOpenLead={openLead} onAddToCrm={(id) => navigate('crm', { tab: id })} />}
       {activeKey === 'channels' && <ChannelOutreachPage key={pageTab || 'default'} initialFilter={pageTab} onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
       {activeKey === 'prospecting' && <AdminProspectingPage key={pageTab || 'default'} initialTab={pageTab} />}
@@ -230,7 +231,8 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
           onOpenCustomer={openCustomer}
         />
       )}
-      {activeKey === 'crm' && (
+      {activeKey === 'crm' && <SimpleCrmPage key={pageTab || 'default'} initialLeadId={pageTab} onOpenLead={openLead} />}
+      {activeKey === 'crmAdvanced' && (
         <AdminCrmPage onOpenOrder={openOrder} onOpenInvoice={openInvoice} onOpenCustomer={openCustomer} />
       )}
       {activeKey === 'leads' &&
@@ -241,6 +243,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
             backLabel={`بازگشت به ${leadOpenedInApp ? PAGE_LABELS[leadReturnKey] || 'سرنخ‌ها' : 'سرنخ‌ها'}`}
             onBack={() => (leadOpenedInApp ? window.history.back() : navigate('leads'))}
             onOpenCustomer={openCustomer}
+            onAddToCrm={(id) => navigate('crm', { tab: id })}
           />
         ) : (
           <AdminLeadsPage onOpenLead={openLead} />
