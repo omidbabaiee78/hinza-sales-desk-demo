@@ -7,7 +7,7 @@ import { cleanCompanyName, normalizedNameKey, extractContactNumbers, extractDoma
 import { extractEvidence, matchedEntityType, matchedBuyerFit, matchedBusinessRole, matchedIdentity } from '../src/prospecting/evidenceEngine.js'
 import { scoreCandidate, computeConfidence } from '../src/prospecting/scoringEngine.js'
 import { qualifyCandidate, mapScoreToPriority } from '../src/prospecting/qualification.js'
-import { classifyEntityType, ENTITY_TYPES } from '../src/prospecting/entityClassification.js'
+import { classifyEntityType, ENTITY_TYPES, isHostedByPortal } from '../src/prospecting/entityClassification.js'
 import { findMatchingKeywordsStrict } from '../src/prospecting/textMatching.js'
 import { NEGATIVE_SIGNALS } from '../src/prospecting/industryTaxonomy.js'
 import { enrichFromWebsite, fetchIdentitySignals, decodeHtmlEntities } from '../src/prospecting/websiteEnrichment.js'
@@ -27,9 +27,11 @@ import {
   promoteEligibleCandidates,
   verifyPendingCandidateSites,
   searchOfficialSitesForLeads,
+  processCandidateBacklog,
 } from '../src/prospecting/discoveryPipeline.js'
+import { SITE_CHECK_VERSION, buildCandidateQueue, scheduledRunAfter } from '../src/prospecting/candidateQueue.js'
 import { findLeadEmailViaSearch } from '../src/prospecting/leadSiteSearch.js'
-import { tidyCompanyName } from '../src/prospecting/siteVerification.js'
+import { tidyCompanyName, siteDecision } from '../src/prospecting/siteVerification.js'
 import { leadsDueForContactEnrichment } from '../src/prospecting/leadContactEnrichment.js'
 import { osmOverpassAdapter, __testing as osmOverpassTesting } from '../src/prospecting/sourceAdapters/osmOverpass.js'
 import { serperSearchAdapter, DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, buildQueryPlan, nextRotationSlice } from '../src/prospecting/sourceAdapters/serperSearch.js'
@@ -3316,8 +3318,9 @@ await check('Phase 33: site step never fetches a page the snippet already shows 
   const { fetchPage, calls } = fakeSite({})
   const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
   assert.equal(calls.length, 0)
-  assert.equal(summary.byStatus.not_company, 1)
+  assert.equal(summary.byStatus.not_company_page, 1)
   assert.equal(client.tables.prospect_candidates[0].site_check_status, 'not_company')
+  assert.equal(client.tables.prospect_candidates[0].status, 'rejected', 'settled, not left for a person')
   assert.equal(client.tables.sales_leads.length, 0)
 })
 
@@ -3386,7 +3389,7 @@ await check('Phase 33: site step leaves candidates pending once the promotion bu
 await check('Phase 33: site step retries a site that failed to load only after a few days', async () => {
   const client = makeFakeClient()
   const now = Date.parse('2026-09-24T10:00:00Z')
-  pendingCandidate(client, { site_checked_at: '2026-09-23T10:00:00Z', site_check_status: 'fetch_failed' })
+  pendingCandidate(client, { site_checked_at: '2026-09-23T10:00:00Z', site_check_status: 'fetch_failed', site_check_version: SITE_CHECK_VERSION })
   const { fetchPage, calls } = fakeSite({})
   await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage, now })
   assert.equal(calls.length, 0)
@@ -3451,14 +3454,32 @@ await check('Phase 33: searchOfficialSitesForLeads fills the email once, never o
   assert.equal(again.searched, 0, 'each lead is searched once')
 })
 
-await check('Phase 33: a scheduled server run skips once today\'s new-email target is reached', async () => {
+await check('Phase 36: once today\'s new-email target is reached a scheduled run stops searching but still settles waiting candidates', async () => {
   const client = makeFakeClient()
   client.tables.prospect_settings[0].daily_new_email_target = 2
   const nowIso = new Date().toISOString()
   client.tables.sales_leads.push({ id: 'a', email_lookup_status: 'found', email_lookup_at: nowIso }, { id: 'b', email_lookup_status: 'found', email_lookup_at: nowIso })
-  const result = await runDiscovery(client, { runType: 'scheduled', serverPhases: true, fetchPage: async () => ({ ok: false }), search: async () => [] })
-  assert.equal(result.skipped, true)
-  assert.equal(client.tables.prospect_discovery_runs.length, 0)
+  await client.from('prospect_sources').insert({ name: 'serper paused', source_type: 'search_result', enabled: true, config: { rotate: true, queriesPerRun: 1, queryTemplates: ['فیلم'], locations: [''] } })
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  let searched = 0
+  let run
+  await withFakeDenoEnv({ SERPER_API_KEY: 'fake-key' }, async () => {
+    mockFetch(async () => {
+      searched += 1
+      return serperResponse([])
+    })
+    try {
+      run = await runDiscovery(client, { runType: 'scheduled', serverPhases: true, fetchPage, search: async () => [] })
+    } finally {
+      restoreFetch()
+    }
+  })
+  assert.notEqual(run.skipped, true)
+  assert.equal(searched, 0, 'no search queries once the target is reached')
+  assert.equal(run.summary.searchesPaused, true)
+  assert.equal(run.summary.siteVerification.promoted, 1, 'the waiting candidate is still read and registered')
+  assert.equal(client.tables.prospect_candidates[0].status, 'promoted')
 })
 
 await check('Phase 33: a server run discovers, then reads the new candidate\'s site and promotes it with its email', async () => {
@@ -3682,6 +3703,166 @@ await check('Phase 36: on a server run a search result is registered only after 
   })
   assert.equal(run.candidates_promoted, 0)
   assert.equal(client.tables.sales_leads.length, 0, 'the portal page read afterwards shows it is not the company')
+})
+
+// ---------------------------------------------------------------------------
+// Phase 36 - settling the candidate backlog: oldest first, re-reads under
+// new rules, bounded retries, explicit reject/review reasons, the queue
+// states the admin page shows.
+// ---------------------------------------------------------------------------
+
+const SITE_STEP = { settings: DEFAULT_SETTINGS, promotions: { remaining: 5 } }
+
+await check('Phase 36: site step reads the oldest waiting candidate first', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { website: 'https://newer-plast.ir/', domain: 'newer-plast.ir', first_seen_at: '2026-09-27T05:00:00Z' })
+  pendingCandidate(client, { first_seen_at: '2026-09-01T05:00:00Z' })
+  const { fetchPage, calls } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage, maxChecks: 1 })
+  assert.ok(calls.every((url) => url.includes('sample-plast.ir')), 'newer candidates cannot push older ones back')
+  assert.equal(summary.stoppedBy, 'site_check_budget')
+  assert.equal(summary.remaining, 1)
+  assert.equal(client.tables.prospect_candidates[0].site_checked_at, undefined)
+})
+
+await check('Phase 36: a candidate read under older rules is read again and registered', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { site_checked_at: '2026-09-20T05:00:00Z', site_check_status: 'checked' })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage })
+  assert.equal(summary.promoted, 1)
+  assert.equal(client.tables.prospect_candidates[0].site_check_version, SITE_CHECK_VERSION)
+})
+
+await check('Phase 36: the third failed load hands the candidate to a person as site_unreachable', async () => {
+  const client = makeFakeClient()
+  const now = Date.parse('2026-09-28T05:00:00Z')
+  pendingCandidate(client, { site_checked_at: '2026-09-20T05:00:00Z', site_check_status: 'fetch_failed', site_check_version: SITE_CHECK_VERSION, site_check_attempts: 1 })
+  const fetchPage = async () => ({ ok: false, reason: 'timeout' })
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage, now })
+  let cand = client.tables.prospect_candidates[0]
+  assert.equal(cand.site_check_attempts, 2)
+  assert.equal(cand.status, 'manual_review')
+  assert.equal(cand.site_review_reason ?? null, null, 'still retried automatically')
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage, now: now + 4 * 86400000 })
+  cand = client.tables.prospect_candidates[0]
+  assert.equal(cand.site_check_attempts, 3)
+  assert.equal(cand.site_review_reason, 'site_unreachable')
+  const calls = []
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage: async (url) => (calls.push(url), { ok: false }), now: now + 30 * 86400000 })
+  assert.equal(calls.length, 0, 'not retried forever')
+})
+
+await check('Phase 36: a site that never answers counts as a failed load, not a stuck run', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const summary = await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage: () => new Promise(() => {}), siteCheckTimeoutMs: 20 })
+  assert.equal(summary.byStatus.timed_out, 1)
+  assert.equal(client.tables.prospect_candidates[0].site_check_status, 'fetch_failed')
+  assert.equal(client.tables.prospect_candidates[0].site_check_attempts, 1)
+})
+
+await check('Phase 36: a machinery seller is rejected with a reason, not left for review', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({
+    'https://sample-plast.ir/': sitePage({ title: 'ایرانو صنعت | تولیدکننده تخصصی دستگاه‌های بسته‌بندی', siteName: 'ایرانو صنعت', description: 'تولیدکننده دستگاه‌های بسته‌بندی شیرینگ و استرچ پالت', body: 'info@sample-plast.ir' }),
+  })
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage })
+  const cand = client.tables.prospect_candidates[0]
+  assert.equal(cand.status, 'rejected')
+  assert.ok(cand.rejection_reason)
+  assert.equal(cand.site_review_reason, null)
+})
+
+await check('Phase 36: a site resembling an already registered company goes to review as possible_duplicate, never a second lead', async () => {
+  const client = makeFakeClient()
+  client.tables.companies.push({ id: 'co-1', name: 'صنایع پلاستیک نمونه' })
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage })
+  const cand = client.tables.prospect_candidates[0]
+  assert.equal(client.tables.sales_leads.length, 0)
+  assert.equal(cand.status, 'manual_review')
+  assert.equal(cand.site_review_reason, 'possible_duplicate')
+  assert.equal(cand.matched_company_id, 'co-1')
+  assert.ok(cand.match_explanation.includes('صنایع پلاستیک نمونه'))
+})
+
+await check('Phase 36: siteDecision sends a stated producer with one non-buyer word to review, still rejects without production wording', () => {
+  const evidence = extractEvidence({
+    canonical_name: 'کفپوش نمونه',
+    business_description: 'شرکت کفپوش نمونه تولید کننده کفپوش پی وی سی و فیلم پلی اتیلن با کارخانه در شهرک صنعتی. زیبایی و دوام',
+    website: 'https://x.ir',
+    domain: 'x.ir',
+  })
+  assert.deepEqual(siteDecision({ siteOwn: { reasons: [] }, evidence, statesProduction: true }), { action: 'review', reason: 'conflicting_signals' })
+  assert.deepEqual(siteDecision({ siteOwn: { reasons: [] }, evidence, statesProduction: false }), { action: 'reject', reason: 'not_buyer' })
+  assert.deepEqual(siteDecision({ siteOwn: { reasons: ['machinery_seller'] }, evidence, statesProduction: true }), { action: 'reject', reason: 'machinery_seller' })
+})
+
+await check('Phase 36: isHostedByPortal spots a page whose head loads a directory\'s assets, not the site\'s own', () => {
+  assert.equal(isHostedByPortal('<head><link href="https://cdn.behtarino.com/x.css"></head>', 'my-shop.ir'), true)
+  assert.equal(isHostedByPortal('<head><link href="https://my-shop.ir/x.css"></head><body>https://behtarino.com</body>', 'my-shop.ir'), false)
+})
+
+await check('Phase 36: processCandidateBacklog settles waiting candidates without searching, logged as a scheduled run', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client)
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const run = await processCandidateBacklog(client, { fetchPage })
+  assert.equal(run.run_type, 'scheduled')
+  assert.equal(run.summary.mode, 'candidate_backlog')
+  assert.equal(run.candidates_promoted, 1)
+  assert.equal(client.tables.prospect_candidates[0].status, 'promoted')
+  assert.equal(client.tables.prospect_discovery_runs[0].status, 'completed')
+})
+
+await check('Phase 36: processCandidateBacklog does not run beside another scheduled run', async () => {
+  const client = makeFakeClient()
+  client.tables.prospect_discovery_runs.push({ id: 'r1', run_type: 'scheduled', status: 'running', started_at: new Date().toISOString() })
+  pendingCandidate(client)
+  const result = await processCandidateBacklog(client, { fetchPage: fakeSite({}).fetchPage })
+  assert.equal(result.skipped, true)
+  assert.equal(client.tables.prospect_candidates[0].site_checked_at, undefined)
+})
+
+await check('Phase 36: scheduledRunAfter follows the 02:15-11:15 UTC cron', () => {
+  assert.equal(scheduledRunAfter('2026-09-28T02:15:00Z').toISOString(), '2026-09-28T03:15:00.000Z')
+  assert.equal(scheduledRunAfter('2026-09-28T11:20:00Z').toISOString(), '2026-09-29T02:15:00.000Z')
+  assert.equal(scheduledRunAfter('2026-09-28T10:00:00Z', 3).toISOString(), '2026-09-29T02:15:00.000Z')
+})
+
+await check('Phase 36: buildCandidateQueue puts every candidate in exactly one state', () => {
+  const now = Date.parse('2026-09-28T05:00:00Z')
+  const checked = { site_checked_at: '2026-09-27T05:00:00Z', site_check_version: SITE_CHECK_VERSION, website: 'https://x.ir' }
+  const waiting = Array.from({ length: 13 }, (_, i) => ({ id: `w${i}`, status: 'manual_review', website: 'https://w.ir', first_seen_at: `2026-09-${String(10 + i).padStart(2, '0')}T00:00:00Z` }))
+  const candidates = [
+    ...waiting,
+    { id: 'q', status: 'qualified', website: 'https://q.ir', first_seen_at: '2026-09-01T00:00:00Z' },
+    { id: 'p', status: 'promoted' },
+    { id: 'r', status: 'rejected' },
+    { id: 'd', status: 'duplicate' },
+    { id: 'a', status: 'manual_review', ...checked, site_check_status: 'checked', site_review_reason: 'name_unclear' },
+    { id: 'n', status: 'manual_review', website: null },
+    { id: 'f', status: 'manual_review', ...checked, site_check_status: 'fetch_failed', site_check_attempts: 1 },
+  ]
+  const queue = buildCandidateQueue(candidates, { now })
+  assert.equal(queue.size, candidates.length)
+  assert.equal(queue.get('q').key, 'eligible')
+  assert.equal(queue.get('q').queuePosition, 1, 'oldest first')
+  assert.equal(queue.get('w0').expectedAt.toISOString(), '2026-09-28T05:15:00.000Z')
+  assert.equal(queue.get('w11').expectedAt.toISOString(), '2026-09-28T06:15:00.000Z', 'position 13 waits for the second run')
+  assert.equal(queue.get('p').key, 'registered')
+  assert.equal(queue.get('r').key, 'closed')
+  assert.equal(queue.get('d').key, 'closed')
+  assert.deepEqual(queue.get('a'), { key: 'attention', reason: 'name_unclear' })
+  assert.deepEqual(queue.get('n'), { key: 'attention', reason: 'no_website' })
+  assert.equal(queue.get('f').key, 'waiting')
+  assert.equal(queue.get('f').reason, 'retry')
+  assert.equal(queue.get('f').attempt, 2)
+  assert.equal(queue.get('f').expectedAt.toISOString(), '2026-09-30T05:15:00.000Z', 'the first run after the retry date')
+  assert.equal(buildCandidateQueue(candidates, { now, automaticRunsOn: false }).get('w0').expectedAt, null)
 })
 
 console.log(`\n${passed} check(s) passed.`)

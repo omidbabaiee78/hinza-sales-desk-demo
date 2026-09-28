@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useProspecting } from '../../../hooks/useProspecting'
 import { formatJalaliDateTime } from '../../../utils/formatters'
-import { runStatusLabel, runTypeLabel } from '../../../prospecting/prospectingLabels'
+import { runStatusLabel, runTypeLabel, QUEUE_STATE_LABELS } from '../../../prospecting/prospectingLabels'
+import { buildCandidateQueue, scheduledRunAfter, MAX_SITE_CHECKS_PER_RUN } from '../../../prospecting/candidateQueue'
 import ErrorBanner from '../../common/ErrorBanner'
 import ProspectCandidateCard from './ProspectCandidateCard'
 import UploadCandidatesModal from './UploadCandidatesModal'
@@ -12,24 +13,20 @@ import '../automation/Automation.css'
 import '../outreach/Outreach.css'
 import './Prospecting.css'
 
-const PRIMARY_TAB_KEY = 'manual_review'
+const PRIMARY_TAB_KEY = 'attention'
 
-// Candidate lists shown as plain chips; run history and source settings are
-// technical and live under «ابزارهای بیشتر».
-const CANDIDATE_TABS = [
-  { key: PRIMARY_TAB_KEY, label: 'نیازمند بررسی شما' },
-  { key: 'promoted', label: 'ثبت‌شده به‌عنوان سرنخ' },
-  { key: 'top', label: 'مناسب، هنوز ثبت نشده' },
-  { key: 'duplicate', label: 'تکراری' },
-  { key: 'rejected', label: 'رد شده' },
-]
+// One chip per state (candidateQueue.js) - every candidate is in exactly
+// one; run history and source settings are technical and live under
+// «ابزارهای بیشتر».
+const CANDIDATE_TABS = ['attention', 'eligible', 'waiting', 'registered', 'closed'].map((key) => ({ key, label: QUEUE_STATE_LABELS[key] }))
 const TOOL_TABS = [
   { key: 'runs', label: 'تاریخچهٔ اجراها' },
   { key: 'sources', label: 'منابع جست‌وجو' },
 ]
 const TABS = [...CANDIDATE_TABS, ...TOOL_TABS]
 const TAB_KEYS = new Set(TABS.map((t) => t.key))
-const REVIEWED_STATUSES = new Set(['qualified', 'manual_review', 'rejected', 'duplicate', 'promoted'])
+// Links from before the queue states (status-named tabs).
+const LEGACY_TABS = { manual_review: 'attention', top: 'eligible', promoted: 'registered', duplicate: 'closed', rejected: 'closed' }
 
 // Phase 24, STEP 5 - a run's duration/trigger type/dry-run+budget usage are
 // all already recorded (prospect_discovery_runs.run_type/started_at/
@@ -83,9 +80,11 @@ export default function AdminProspectingPage({ initialTab }) {
     runDryRunQualification,
     runVerifyQualificationState,
     runPromoteEligibleCandidates,
+    settings,
   } = useProspecting()
 
-  const [activeTab, setActiveTab] = useState(TAB_KEYS.has(initialTab) ? initialTab : PRIMARY_TAB_KEY)
+  const requestedTab = LEGACY_TABS[initialTab] || initialTab
+  const [activeTab, setActiveTab] = useState(TAB_KEYS.has(requestedTab) ? requestedTab : PRIMARY_TAB_KEY)
   const [uploading, setUploading] = useState(false)
   const [copyNotice, setCopyNotice] = useState('')
   const [verifyCopyNotice, setVerifyCopyNotice] = useState('')
@@ -137,29 +136,23 @@ export default function AdminProspectingPage({ initialTab }) {
 
   const handlers = { promote, reject, markDuplicate, updateFields, reEvaluate }
 
-  const buckets = useMemo(
-    () => ({
-      top: candidates.filter((c) => c.status === 'qualified'),
-      manual_review: candidates.filter((c) => c.status === 'manual_review'),
-      rejected: candidates.filter((c) => c.status === 'rejected'),
-      duplicate: candidates.filter((c) => c.status === 'duplicate'),
-      promoted: candidates.filter((c) => c.status === 'promoted'),
-    }),
-    [candidates],
-  )
-
-  const summary = useMemo(
-    () => ({
-      found: candidates.length,
-      newToday: candidates.filter((c) => isToday(c.created_at)).length,
-      reviewed: candidates.filter((c) => REVIEWED_STATUSES.has(c.status)).length,
-      promoted: buckets.promoted.length,
-      duplicates: buckets.duplicate.length,
-      needsReview: buckets.manual_review.length,
-      rejected: buckets.rejected.length,
-    }),
-    [candidates, buckets],
-  )
+  // Automatic site checks run only while the engine and its daily schedule
+  // are both on (discoveryPipeline.js runDiscovery).
+  const automaticRunsOn = Boolean(settings?.enabled && settings?.daily_run_enabled)
+  const queue = useMemo(() => buildCandidateQueue(candidates, { automaticRunsOn }), [candidates, automaticRunsOn])
+  const buckets = useMemo(() => {
+    const byState = Object.fromEntries(CANDIDATE_TABS.map((tab) => [tab.key, []]))
+    for (const candidate of candidates) byState[queue.get(candidate.id)?.key]?.push(candidate)
+    // Waiting lists in the order the scheduler reads them.
+    for (const key of ['eligible', 'waiting']) {
+      byState[key].sort((a, b) => (queue.get(a.id).queuePosition ?? Infinity) - (queue.get(b.id).queuePosition ?? Infinity))
+    }
+    return byState
+  }, [candidates, queue])
+  // Fixed at page load; the page reloads its lists after every action.
+  const [openedAt] = useState(() => Date.now())
+  const nextRun = automaticRunsOn ? scheduledRunAfter(openedAt) : null
+  const newToday = candidates.filter((c) => isToday(c.created_at)).length
   const lastRun = runs[0]
 
   async function handleUploadSubmit(rows) {
@@ -209,39 +202,39 @@ export default function AdminProspectingPage({ initialTab }) {
       </p>
 
       <div className="today-summary-grid">
-        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
-          <span className="today-summary-value">{loading ? '—' : summary.found}</span>
-          <span className="today-summary-label">شرکت پیداشده (کل)</span>
-          <span className="admin-stat-hint">{loading ? '' : `${summary.newToday} مورد امروز`}</span>
+        <button type="button" className="today-summary-card admin-stat tone-offer" onClick={() => setActiveTab('attention')}>
+          <span className="today-summary-value">{loading ? '—' : buckets.attention.length}</span>
+          <span className="today-summary-label">{QUEUE_STATE_LABELS.attention}</span>
+          <span className="admin-stat-hint">سیستم نمی‌تواند خودش تصمیم بگیرد؛ دلیل روی هر مورد نوشته شده</span>
         </button>
-        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
-          <span className="today-summary-value">{loading ? '—' : summary.reviewed}</span>
-          <span className="today-summary-label">بررسی‌شده توسط سیستم</span>
-          <span className="admin-stat-hint">شامل همهٔ موارد زیر</span>
+        <button type="button" className="today-summary-card admin-stat tone-won" onClick={() => setActiveTab('eligible')}>
+          <span className="today-summary-value">{loading ? '—' : buckets.eligible.length}</span>
+          <span className="today-summary-label">{QUEUE_STATE_LABELS.eligible}</span>
+          <span className="admin-stat-hint">پس از خواندن وب‌سایت، بدون تأیید شما ثبت می‌شود</span>
         </button>
-        <button type="button" className="today-summary-card admin-stat tone-won" onClick={() => setActiveTab('promoted')}>
-          <span className="today-summary-value">{loading ? '—' : summary.promoted}</span>
-          <span className="today-summary-label">ثبت‌شده به‌عنوان سرنخ</span>
+        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab('waiting')}>
+          <span className="today-summary-value">{loading ? '—' : buckets.waiting.length}</span>
+          <span className="today-summary-label">{QUEUE_STATE_LABELS.waiting}</span>
+          <span className="admin-stat-hint">کاری از شما لازم نیست</span>
         </button>
-        <button type="button" className="today-summary-card admin-stat tone-contacted" onClick={() => setActiveTab('duplicate')}>
-          <span className="today-summary-value">{loading ? '—' : summary.duplicates}</span>
-          <span className="today-summary-label">تکراری</span>
-          <span className="admin-stat-hint">دوباره ثبت نشد</span>
+        <button type="button" className="today-summary-card admin-stat tone-won" onClick={() => setActiveTab('registered')}>
+          <span className="today-summary-value">{loading ? '—' : buckets.registered.length}</span>
+          <span className="today-summary-label">{QUEUE_STATE_LABELS.registered}</span>
         </button>
-        <button type="button" className="today-summary-card admin-stat tone-offer" onClick={() => setActiveTab(PRIMARY_TAB_KEY)}>
-          <span className="today-summary-value">{loading ? '—' : summary.needsReview}</span>
-          <span className="today-summary-label">نیازمند بررسی شما</span>
-        </button>
-        <button type="button" className="today-summary-card admin-stat tone-lost" onClick={() => setActiveTab('rejected')}>
-          <span className="today-summary-value">{loading ? '—' : summary.rejected}</span>
-          <span className="today-summary-label">رد شده</span>
-          <span className="admin-stat-hint">نامناسب (مثلاً فروشنده یا فهرست آگهی)</span>
+        <button type="button" className="today-summary-card admin-stat tone-lost" onClick={() => setActiveTab('closed')}>
+          <span className="today-summary-value">{loading ? '—' : buckets.closed.length}</span>
+          <span className="today-summary-label">{QUEUE_STATE_LABELS.closed}</span>
+          <span className="admin-stat-hint">مثلاً مقاله، فهرست آگهی، فروشنده دستگاه یا شرکتی که قبلاً ثبت شده</span>
         </button>
       </div>
 
       <p className="admin-note">
-        این عددها هم‌پوشانی دارند و نباید با هم جمع شوند: «بررسی‌شده» شامل ثبت‌شده، تکراری، نیازمند بررسی و ردشده است. «شرکت پیداشده» نتیجهٔ جست‌وجوست و با تعداد
-        سرنخ‌ها یکی نیست؛ فقط موارد «ثبت‌شده به‌عنوان سرنخ» وارد فهرست سرنخ‌ها می‌شوند.
+        هر شرکت پیداشده ({loading ? '—' : candidates.length} مورد، {loading ? '—' : newToday} مورد امروز) دقیقاً در یکی از این پنج دسته است و جمع آن‌ها برابر کل است.{' '}
+        {!settings
+          ? ''
+          : automaticRunsOn
+            ? `بررسی خودکار وب‌سایت‌ها در هر اجرا حداکثر ${MAX_SITE_CHECKS_PER_RUN} وب‌سایت را، از قدیمی‌ترین مورد، می‌خواند؛ اجرای بعدی: ${formatJalaliDateTime(nextRun)}. زمان‌های روی موارد در انتظار تخمینی است.`
+            : 'اجرای خودکار روزانه خاموش است؛ موارد «در انتظار» تا روشن شدن آن بررسی نمی‌شوند.'}
       </p>
 
       <div className="today-filters">
@@ -249,7 +242,7 @@ export default function AdminProspectingPage({ initialTab }) {
           {CANDIDATE_TABS.map((tab) => (
             <button key={tab.key} type="button" className={`today-chip${activeTab === tab.key ? ' active' : ''}`} onClick={() => setActiveTab(tab.key)}>
               {tab.label}
-              {!loading && buckets[tab.key] ? ` (${buckets[tab.key].length})` : ''}
+              {!loading ? ` (${buckets[tab.key].length})` : ''}
             </button>
           ))}
         </div>
@@ -436,7 +429,7 @@ export default function AdminProspectingPage({ initialTab }) {
       {!loading && activeTab !== 'runs' && activeTab !== 'sources' && visibleCandidates.length > 0 && (
         <div className="today-item-list">
           {visibleCandidates.map((candidate) => (
-            <ProspectCandidateCard key={candidate.id} candidate={candidate} handlers={handlers} />
+            <ProspectCandidateCard key={candidate.id} candidate={candidate} queueState={queue.get(candidate.id)} handlers={handlers} />
           ))}
         </div>
       )}

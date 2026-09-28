@@ -83,6 +83,14 @@ const MARKETPLACE_DOMAINS = [
   'istgah.com',
   'niazerooz.com',
   'bazarekeshavarzi.com',
+  // 2026-09-28 candidate audit - classifieds whose ad pages were read as
+  // company sites (niazerooz.ir city subdomains, panikad.com city
+  // subdomains).
+  'niazerooz.ir',
+  'panikad.com',
+  'mashhdagahi.ir',
+  'top-ads.ir',
+  'tickapp.ir',
 ]
 const DIRECTORY_DOMAINS = [
   'emalls.ir',
@@ -91,7 +99,34 @@ const DIRECTORY_DOMAINS = [
   'foodkeys.com',
   'wikiplast.ir',
   'namayeshgahha.ir',
+  // 2026-09-28 candidate audit - business/job directories whose listing
+  // pages were read as company sites.
+  'iranmashaghel.com',
+  'e-estekhdam.com',
+  'iranjobino.com',
+  'jobvision.ir',
+  'addressdan.ir',
+  'asnafyab.ir',
+  'tablighjo.com',
+  'tabriz118.com',
+  '118iran.ir',
+  'senfyab.com',
+  'omdezone.ir',
+  'kojabehtarast.com',
+  'rasmio.com',
+  'behtarino.com',
+  'yabiro.com',
 ]
+
+// A homepage whose <head> loads assets from one of these platforms is a
+// page the platform hosts (niazerooz's «انتقال» redirect page on
+// my.<shop>.ir), not a company's own site.
+export function isHostedByPortal(html, ownDomain) {
+  const head = String(html || '').split(/<\/head>/i)[0]
+  const hosts = [...head.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1].toLowerCase())
+  const own = String(ownDomain || '').toLowerCase().replace(/^www\./, '')
+  return hosts.some((host) => !(own && (host === own || host.endsWith(`.${own}`))) && domainMatches(host, [...MARKETPLACE_DOMAINS, ...DIRECTORY_DOMAINS]))
+}
 
 // Listicle/roundup-article phrasing - "لیست ۱۰ تولیدکننده...", "بهترین
 // تولیدکنندگان..." - a page ABOUT MULTIPLE companies, never a company
