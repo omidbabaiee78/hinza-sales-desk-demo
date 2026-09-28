@@ -307,6 +307,12 @@ export function classifyEntityType({ domain, title, snippet, url } = {}) {
   return ENTITY_TYPES.UNKNOWN
 }
 
+// A domain that is itself a third-party platform (video, social,
+// marketplace, directory) - every page on it is someone else's listing.
+export function isKnownPlatformDomain(domain) {
+  return domainMatches(domain, [...VIDEO_DOMAINS, ...SOCIAL_DOMAINS, ...MARKETPLACE_DOMAINS, ...DIRECTORY_DOMAINS])
+}
+
 export function isNonCompanyEntityType(entityType) {
   return (
     entityType === ENTITY_TYPES.DIRECTORY_OR_LIST ||
