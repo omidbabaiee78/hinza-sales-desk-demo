@@ -19,7 +19,7 @@ import { isPromotableIdentity, resolveVerifiedIdentity, isPlausibleOrganizationN
 import { fetchIdentitySignals } from './websiteEnrichment.js'
 import { serializePromotedLead } from './promotion.js'
 import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, searchWeb } from './sourceAdapters/serperSearch.js'
-import { verifyCandidateSite, snippetSaysNotCompany } from './siteVerification.js'
+import { verifyCandidateSite, snippetSaysNotCompany, ownsArticlePage, homepageCandidate } from './siteVerification.js'
 import { SITE_CHECK_VERSION, MAX_SITE_CHECKS_PER_RUN, MAX_SITE_FETCH_ATTEMPTS, isSitePending, compareSiteQueue, nextFetchAttempt } from './candidateQueue.js'
 import { siteRejectReasonLabel, reviewReasonLabel } from './prospectingLabels.js'
 import { findLeadEmailViaSearch, LEAD_SITE_SEARCH_STATUSES } from './leadSiteSearch.js'
@@ -89,6 +89,7 @@ const SITE_VERIFY_CONCURRENCY = 4
 // contact and about pages) is abandoned after this long and counted as a
 // failed load, retried later (candidateQueue.js).
 const SITE_CHECK_TIMEOUT_MS = 25 * 1000
+const THIS_RUN = 'this-run'
 // Web searches per run for leads whose recorded website is not their own.
 const MAX_LEAD_SITE_SEARCHES_PER_RUN = 4
 
@@ -658,6 +659,13 @@ export async function verifyPendingCandidateSites(
   // company is already registered (e.g. entered by hand).
   const leadIdByMobile = takenContacts(leadsRes.data || []).mobiles
   const sourceNameById = new Map((sourcesRes.data || []).map((src) => [src.id, src.name]))
+  // Homepages already judged for an article found on them (this run, or
+  // waiting for a person): a second article of the same site adds nothing.
+  const judgedHomepages = new Map(
+    (candidatesRes.data || [])
+      .filter((c) => c.site_review_reason === 'found_via_article' && (c.site_check_version ?? 1) >= SITE_CHECK_VERSION)
+      .map((c) => [c.website, c.id]),
+  )
   const count = (status) => {
     summary.byStatus[status] = (summary.byStatus[status] || 0) + 1
   }
@@ -695,10 +703,24 @@ export async function verifyPendingCandidateSites(
     })
   }
 
-  async function handle(candidate) {
-    if (snippetSaysNotCompany(candidate)) {
-      await reject(candidate, 'not_company_page', { site_check_status: 'not_company' })
+  async function handle(listed) {
+    // A company's own blog/list page is judged by its homepage
+    // (siteVerification.js ownsArticlePage); a platform's page is not read.
+    const ownBlog = ownsArticlePage(listed)
+    if (!ownBlog && snippetSaysNotCompany(listed)) {
+      await reject(listed, 'not_company_page', { site_check_status: 'not_company' })
       return
+    }
+    const candidate = ownBlog ? homepageCandidate(listed) : listed
+    if (ownBlog) {
+      const sameSite = judgedHomepages.get(candidate.website)
+      if (sameSite) {
+        count('same_site_article')
+        summary.duplicates += 1
+        await markChecked(listed, { status: 'duplicate', duplicate_of_candidate_id: sameSite, site_review_reason: null, match_explanation: 'مقالهٔ دیگری از همان سایت که قبلاً بررسی شده است.' })
+        return
+      }
+      judgedHomepages.set(candidate.website, listed.id)
     }
     const result = await withTimeout(verifyCandidateSite({ candidate, settings, ...(fetchPage ? { fetchPage } : {}) }), siteCheckTimeoutMs)
     summary.checked += 1
@@ -716,15 +738,21 @@ export async function verifyPendingCandidateSites(
     if (email) summary.emailsFound += 1
     const siteMobile = result.mobiles?.[0] ? normalizeMobile(result.mobiles[0].number) : null
     const matchedLeadId = (email && leadIdByEmail.get(email)) || leadIdByHost.get(hostOfUrl(candidate.website)) || (siteMobile && leadIdByMobile.get(siteMobile)) || null
+    // Registered earlier in this run (its lead id is not known yet).
+    const matchedThisRun = matchedLeadId === THIS_RUN
     const enriched = result.candidate
     const lookalike = !matchedLeadId && result.promotable ? similarName(enriched.normalized_name_key, candidate.normalized_name_key) : null
-    const promote = result.promotable && !matchedLeadId && !lookalike
+    const viaArticle = ownBlog && result.promotable && !matchedLeadId && !lookalike
+    const promote = result.promotable && !matchedLeadId && !lookalike && !viaArticle
     if (promote && promotions.remaining <= 0) {
       summary.stoppedBy = summary.stoppedBy || 'promotion_budget'
       return
     }
     if (promote) promotions.remaining -= 1
-    if (email && promote) leadIdByEmail.set(email, 'this-run')
+    // Reserved before any await, so two pages of one company read side by
+    // side (two blog posts on the same domain) never become two leads.
+    if (email && promote) leadIdByEmail.set(email, THIS_RUN)
+    if (promote && hostOfUrl(candidate.website)) leadIdByHost.set(hostOfUrl(candidate.website), THIS_RUN)
     if (promote && enriched.normalized_name_key) {
       nameRecords.push({ kind: 'lead', id: null, name: enriched.canonical_name, keys: buildMatchKeys({ nameKey: enriched.normalized_name_key }) })
     }
@@ -732,7 +760,11 @@ export async function verifyPendingCandidateSites(
     // The site's own verdict on a candidate it does not register
     // (siteVerification.js siteDecision): rejected, or a named reason only
     // a person can settle.
-    const decision = lookalike ? { action: 'review', reason: 'possible_duplicate' } : result.decision || { action: 'review', reason: 'other' }
+    const decision = lookalike
+      ? { action: 'review', reason: 'possible_duplicate' }
+      : viaArticle
+        ? { action: 'review', reason: 'found_via_article' }
+        : result.decision || { action: 'review', reason: 'other' }
     const status = matchedLeadId ? 'duplicate' : promote ? 'qualified' : decision.action === 'reject' ? 'rejected' : 'manual_review'
     const reviewReason = status === 'manual_review' ? decision.reason : null
     count(matchedLeadId ? 'duplicate' : promote ? 'promoted' : status === 'rejected' ? decision.reason : `review:${decision.reason}`)
@@ -745,6 +777,7 @@ export async function verifyPendingCandidateSites(
         ? `${lookalike.explanation.replace(' - نیازمند بررسی دستی', '')} با «${lookalike.name}» که قبلاً ثبت شده است.`
         : null
     const updated = await markChecked(candidate, {
+      ...(ownBlog ? { website: candidate.website } : {}),
       site_check_status: result.emailStatus === 'found' ? 'email_found' : result.emailStatus || 'checked',
       site_email_source_url: result.emailSourceUrl,
       site_phone_source_url: result.phoneSourceUrl,
@@ -763,7 +796,7 @@ export async function verifyPendingCandidateSites(
       site_check_attempts: 0,
       qualification_reason: status === 'rejected' ? null : reviewReason ? reviewReasonLabel(reviewReason) : result.qualification.reason,
       rejection_reason: status === 'rejected' ? siteRejectReasonLabel(decision.reason) : null,
-      matched_lead_id: matchedLeadId || (lookalike?.kind === 'lead' ? lookalike.id : null),
+      matched_lead_id: (matchedThisRun ? null : matchedLeadId) || (lookalike?.kind === 'lead' ? lookalike.id : null),
       matched_company_id: lookalike?.kind === 'company' ? lookalike.id : null,
       match_explanation: matchExplanation,
     })

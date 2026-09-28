@@ -3314,7 +3314,7 @@ await check('Phase 33: site step promotes a manufacturer the snippet left in man
 
 await check('Phase 33: site step never fetches a page the snippet already shows is an article/directory', async () => {
   const client = makeFakeClient()
-  pendingCandidate(client, { raw_name: 'بهترین تولیدکنندگان فیلم پلی اتیلن', canonical_name: 'sample', business_description: 'لیست بهترین کارخانه های تولید فیلم' })
+  pendingCandidate(client, { raw_name: 'بهترین تولیدکنندگان فیلم پلی اتیلن', canonical_name: 'sample', business_description: 'لیست بهترین کارخانه های تولید فیلم', website: 'https://behtarino.com/list/film', domain: 'behtarino.com' })
   const { fetchPage, calls } = fakeSite({})
   const summary = await verifyPendingCandidateSites(client, { settings: DEFAULT_SETTINGS, deadline: Date.now() + 60000, promotions: { remaining: 5 }, fetchPage })
   assert.equal(calls.length, 0)
@@ -3863,6 +3863,45 @@ await check('Phase 36: buildCandidateQueue puts every candidate in exactly one s
   assert.equal(queue.get('f').attempt, 2)
   assert.equal(queue.get('f').expectedAt.toISOString(), '2026-09-30T05:15:00.000Z', 'the first run after the retry date')
   assert.equal(buildCandidateQueue(candidates, { now, automaticRunsOn: false }).get('w0').expectedAt, null)
+})
+
+await check('Phase 36: a company\'s own blog post is judged by its homepage and sent to a person, once per site, never keeping the article\'s names or contacts', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, {
+    raw_name: 'بهترین تولید کننده نایلون شیرینگ پک در تهران کیست؟',
+    canonical_name: 'بهترین تولید کننده نایلون شیرینگ پک در تهران کیست؟',
+    website: 'https://sample-plast.ir/the-best-shrink-maker/',
+    business_description: 'لیست بهترین کارخانه های تولید فیلم شیرینگ: پلاستیک دیگر، نایلون سوم',
+    mobile: '09120000000',
+  })
+  pendingCandidate(client, {
+    raw_name: 'لیست کارخانه های تولید فیلم استرچ کدامند؟',
+    canonical_name: 'لیست کارخانه های تولید فیلم استرچ کدامند؟',
+    website: 'https://sample-plast.ir/list-of-stretch-factories/',
+    business_description: 'لیست شرکت‌های تولید فیلم استرچ',
+    first_seen_at: '2026-09-24T06:00:00Z',
+  })
+  const { fetchPage } = fakeSite({ 'https://sample-plast.ir/': MANUFACTURER_HOME })
+  const summary = await verifyPendingCandidateSites(client, { ...SITE_STEP, promotions: { remaining: 5 }, deadline: Date.now() + 60000, fetchPage })
+  assert.equal(summary.promoted, 0, 'a homepage alone is not enough to register')
+  assert.equal(client.tables.sales_leads.length, 0)
+  const [first, second] = client.tables.prospect_candidates
+  assert.equal(first.status, 'manual_review')
+  assert.equal(first.site_review_reason, 'found_via_article')
+  assert.equal(first.website, 'https://sample-plast.ir/')
+  assert.equal(first.canonical_name, 'صنایع پلاستیک نمونه', 'named from the homepage, not the article')
+  assert.notEqual(first.mobile, '09120000000', 'no number from the article')
+  assert.equal(second.status, 'duplicate', 'one review item per site')
+  assert.equal(second.duplicate_of_candidate_id, first.id)
+})
+
+await check('Phase 36: an article on a known platform is still rejected without being read', async () => {
+  const client = makeFakeClient()
+  pendingCandidate(client, { raw_name: 'بهترین تولیدکنندگان فیلم', canonical_name: 'x', website: 'https://www.aparat.com/v/abc', domain: 'aparat.com', business_description: 'ویدیو' })
+  const { fetchPage, calls } = fakeSite({})
+  await verifyPendingCandidateSites(client, { ...SITE_STEP, deadline: Date.now() + 60000, fetchPage })
+  assert.equal(calls.length, 0)
+  assert.equal(client.tables.prospect_candidates[0].status, 'rejected')
 })
 
 console.log(`\n${passed} check(s) passed.`)

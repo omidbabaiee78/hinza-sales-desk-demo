@@ -1,6 +1,6 @@
 import { fetchPageSafely, identitySignalsFromHtml } from './websiteEnrichment.js'
 import { extractEvidence, matchedEntityType, matchedBuyerFit, matchedIdentity, matchedHasStrongNegative, replaceIdentityEvidence } from './evidenceEngine.js'
-import { isNonCompanyEntityType, isHostedByPortal } from './entityClassification.js'
+import { isNonCompanyEntityType, isHostedByPortal, isKnownPlatformDomain } from './entityClassification.js'
 import { scoreCandidate } from './scoringEngine.js'
 import { qualifyCandidate } from './qualification.js'
 import { isPromotableIdentity, isPlausibleOrganizationName, resolveVerifiedIdentity, IDENTITY_SOURCES } from './identityResolution.js'
@@ -217,6 +217,36 @@ function isConflictingNonBuyer(evidence) {
 // shows is an article/directory/marketplace/social/video page.
 export function snippetSaysNotCompany(candidate) {
   return isNonCompanyEntityType(matchedEntityType(extractEvidence(candidate)))
+}
+
+// An article or list page on a domain that is not a known platform is often
+// a company's own blog (pooshesh-plastic.ir's «بهترین تولید کننده نایلون
+// شیرینگ پک در تهران کیست؟»). The page names other companies too, so the
+// domain's owner is judged by its homepage alone - its title, description
+// and contacts - with nothing (name, text, email, numbers) kept from the
+// article. A homepage alone is weaker evidence than a search result about
+// the company itself (in the production dry run about 1 in 5 that passed
+// were steel, concrete or chemical traders), so one that passes goes to a
+// person (found_via_article); one the homepage rules out is rejected.
+export function ownsArticlePage(candidate) {
+  return Boolean(originOf(candidate.website)) && !isKnownPlatformDomain(candidate.domain) && snippetSaysNotCompany(candidate)
+}
+
+export function homepageCandidate(candidate) {
+  const homepage = originOf(candidate.website)
+  return {
+    ...candidate,
+    website: homepage,
+    source_url: homepage,
+    raw_name: candidate.domain,
+    canonical_name: candidate.domain,
+    normalized_name_key: normalizedNameKey(candidate.domain),
+    business_description: '',
+    raw_data: { link: homepage, title: candidate.domain },
+    email: null,
+    mobile: null,
+    phone: null,
+  }
 }
 
 // -> { ok, status, candidate (enriched fields), evidence, scores,
