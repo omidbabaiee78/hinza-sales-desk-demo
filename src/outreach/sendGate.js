@@ -58,8 +58,18 @@ export function maskRecipient(recipient, channel) {
 // guaranteed to agree on whether this is a test or production send - two
 // independent copies of this formula would risk drifting apart and letting
 // a test send slip onto the production idempotency key (or vice versa).
-export function resolveEffectiveTestMode(settings, testMode) {
-  const persistedTestMode = settings?.provider_test_mode ?? true
+//
+// Test mode is per channel: WhatsApp has its own whatsapp_test_mode (Phase
+// 37), so testing WhatsApp never changes email; email (and Bale) keep
+// provider_test_mode. Before phase37 is applied whatsapp_test_mode is
+// absent and WhatsApp falls back to provider_test_mode, as before.
+export function channelTestMode(settings, channel) {
+  if (channel === 'whatsapp') return settings?.whatsapp_test_mode ?? settings?.provider_test_mode ?? true
+  return settings?.provider_test_mode ?? true
+}
+
+export function resolveEffectiveTestMode(settings, testMode, channel) {
+  const persistedTestMode = channelTestMode(settings, channel)
   const explicitTestIntent = testMode === true
   return persistedTestMode || explicitTestIntent
 }
@@ -128,7 +138,7 @@ export function evaluateSendGate({
   const reasons = []
   const channel = suggestion?.channel
 
-  const effectiveTestMode = resolveEffectiveTestMode(settings, testMode)
+  const effectiveTestMode = resolveEffectiveTestMode(settings, testMode, channel)
 
   // A controlled, explicitly-requested admin TEST send is allowed to bypass
   // the global outreach_enabled kill switch - a production send never is,
@@ -298,7 +308,7 @@ export const AMBIGUOUS_PRIOR_DELIVERY_REASON =
 // outreach_send_claims is server-only, so an unresolved real send is
 // detected from its outreach_attempts row ('prepared').
 export function previewFirstEmailSend({ suggestion, lead, settings, leadAttempts = [], now = new Date() }) {
-  const effectiveTestMode = resolveEffectiveTestMode(settings, false)
+  const effectiveTestMode = resolveEffectiveTestMode(settings, false, 'email')
   const history = classifySendAttempts(leadAttempts, suggestion?.id)
   // Most specific reasons come FIRST (the UI shows the first reason).
   const reasons = []

@@ -183,7 +183,10 @@ export function buildEmailOutreachState({ leads = [], suggestions = [], attempts
       set('skipped', 'closed')
       continue
     }
-    if (lead.last_contact_at || (lead.status && lead.status !== 'new') || qualifyingAttempts(leadAttempts).length > 0) {
+    // A WhatsApp introduction is not a conversation - the lead still gets
+    // the email intro (the claim keeps the two at least 24h apart).
+    const contactAttempts = qualifyingAttempts(leadAttempts).filter((a) => !(a.channel === 'whatsapp' && a.purpose === 'provider_send'))
+    if (lead.last_contact_at || (lead.status && lead.status !== 'new') || contactAttempts.length > 0) {
       set('skipped', 'already_in_contact')
       continue
     }

@@ -18,8 +18,8 @@ import { composeAutoIntroEmail, EMAIL_STATE_REASONS } from './autoEmail.js'
 //                      window sends it
 //   sending          - claimed by one run (atomic), provider call in flight
 //   sent             - the provider accepted it (NOT proof of delivery)
-//   delivered        - the provider reported delivery (needs a status
-//                      webhook - not connected yet for either channel)
+//   delivered        - the provider reported delivery (WhatsApp: the
+//                      whatsapp-webhook status callback; Bale has none)
 //   failed           - the provider rejected it (e.g. no Bale account)
 //   uncertain        - the call's outcome is unknown; never retried
 //   opted_out        - the lead asked not to be contacted
@@ -106,9 +106,10 @@ export const READINESS_REASON_LABELS = {
 const CLOSED_STATUSES = new Set(['converted', 'lost'])
 
 // Opt-out (do_not_contact, or a «لغو» reply), closed, or already in a
-// conversation a person is handling. The automatic email intro stamps
-// last_contact_at, so that alone does not count here - otherwise one
-// channel's introduction would silence the others.
+// conversation a person is handling. An email intro (automatic, or a
+// provider send from the outreach card) stamps last_contact_at, so that
+// alone does not count here - otherwise one channel's introduction would
+// silence the others. The 24h gap between the two is enforced by the claim.
 export function leadIntroBlock(lead, { optedOutLeadIds, repliedLeadIds, autoEmailedLeadIds }) {
   if (lead.do_not_contact || optedOutLeadIds.has(lead.id)) return 'opted_out'
   if (CLOSED_STATUSES.has(lead.status)) return 'closed'
@@ -118,10 +119,15 @@ export function leadIntroBlock(lead, { optedOutLeadIds, repliedLeadIds, autoEmai
   return null
 }
 
-export function replySets(replies = [], recipients = []) {
+// attempts = outreach_attempts rows; a real email provider send counts as
+// an email intro exactly like an email_outreach_recipients row.
+export function replySets(replies = [], recipients = [], attempts = []) {
   const optedOutLeadIds = new Set(replies.filter((r) => r.final_intent === 'do_not_contact' || r.predicted_intent === 'do_not_contact').map((r) => r.lead_id))
   const repliedLeadIds = new Set(replies.map((r) => r.lead_id))
   const autoEmailedLeadIds = new Set(recipients.filter((r) => r.lead_id && r.status !== 'failed').map((r) => r.lead_id))
+  for (const a of attempts) {
+    if (a.lead_id && a.channel === 'email' && a.purpose === 'provider_send' && a.status === 'sent' && !a.test_mode) autoEmailedLeadIds.add(a.lead_id)
+  }
   return { optedOutLeadIds, repliedLeadIds, autoEmailedLeadIds }
 }
 

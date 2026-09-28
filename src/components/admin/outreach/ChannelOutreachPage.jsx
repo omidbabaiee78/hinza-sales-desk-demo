@@ -31,6 +31,22 @@ function matchesFilter(row, filter) {
   return true
 }
 
+const TEST_SEND_MISSING = {
+  credentials_missing: 'اطلاعات دسترسی واتساپ',
+  template_missing: 'نام قالب تأییدشده',
+  test_recipient_missing: 'شمارهٔ آزمایشی',
+}
+
+// "accepted" only means Meta took the request; delivery is confirmed later
+// by the whatsapp-webhook status callback, never here.
+function testSendLine(report) {
+  if (!report.ok) return 'پیام آزمایشی انجام نشد یا نتیجه آن معلوم نیست.'
+  if (report.missing?.length) return `پیام آزمایشی ارسال نشد — تنظیم نشده: ${report.missing.map((m) => TEST_SEND_MISSING[m] || m).join('، ')}`
+  if (report.outcome === 'accepted') return `واتساپ درخواست را پذیرفت (${report.recipientMasked}). «تحویل‌شده» فقط پس از گزارش واتساپ ثبت می‌شود.`
+  if (report.outcome === 'failed') return `واتساپ پیام را رد کرد: ${report.errorCode || ''} ${report.errorMessage || ''}`.trim()
+  return 'نتیجهٔ پیام آزمایشی نامشخص است؛ دوباره ارسال نکنید تا وضعیت روشن شود.'
+}
+
 export default function ChannelOutreachPage({ onOpenLead, initialFilter }) {
   const c = useChannelOutreach()
   const email = useEmailOutreach()
@@ -123,6 +139,7 @@ export default function ChannelOutreachPage({ onOpenLead, initialFilter }) {
         <section className="lead-detail-card">
           <p className="lead-form-hint">
             واتساپ: {c.settings?.whatsapp_provider_enabled ? 'روشن در تنظیمات' : 'خاموش'}
+            {c.settings?.whatsapp_test_mode !== false ? ' — حالت آزمایشی (ارسال خودکار به سرنخ‌ها انجام نمی‌شود)' : ''}
             {readiness?.whatsapp?.length ? ` — آماده نیست: ${readiness.whatsapp.map((r) => READINESS_REASON_LABELS[r] || r).join('، ')}` : readiness ? ' — آماده ارسال' : ''}
           </p>
           <p className="lead-form-hint">
@@ -136,7 +153,16 @@ export default function ChannelOutreachPage({ onOpenLead, initialFilter }) {
             <button type="button" className="btn-secondary" disabled={c.loading || c.running || c.notInstalled} onClick={c.runNow}>
               {c.running ? 'در حال اجرا...' : 'اجرای اکنون (واتساپ/بله) — فقط ثبت اطلاعات تماس تا وقتی سرویس‌ها خاموش‌اند'}
             </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={c.loading || c.running || c.notInstalled}
+              onClick={() => window.confirm('یک پیام قالب واتساپ فقط به شمارهٔ آزمایشی تنظیم‌شده در سرور ارسال شود؟ (به هیچ سرنخی ارسال نمی‌شود)') && c.testSend()}
+            >
+              ارسال یک پیام آزمایشی واتساپ به شمارهٔ آزمایشی
+            </button>
           </div>
+          {c.testSendReport && <p className="lead-form-hint">{testSendLine(c.testSendReport)}</p>}
         </section>
       </details>
 

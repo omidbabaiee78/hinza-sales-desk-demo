@@ -27,6 +27,8 @@
 import { evaluateSendGate, maskRecipient, resolveEffectiveTestMode, resolveRealRecipient, sendIdempotencyKey, buildEmailBody, emailSubjectFor } from './sendGate.js'
 import { normalizeEmail } from '../prospecting/normalization.js'
 import { getProviderSendFn } from './providers/index.js'
+import { describeTemplateSend, introTemplateParameters } from './providers/whatsappProvider.js'
+import { CHANNEL_CLAIM_REASONS, channelOutcome, claimChannelSend, recordChannelSendResult } from './channelClaims.js'
 
 // Test and production sends are scoped to DIFFERENT idempotency keys (and
 // therefore different claim rows) - a test send must never be able to
@@ -216,14 +218,12 @@ const VALID_OUTCOMES = new Set(['accepted', 'rejected', 'unknown'])
 // (a bug in the provider, a future code path that forgot to set it, a
 // typo) fails closed to 'unknown', never silently falls back to `ok`.
 //
-// whatsappProvider.js is INTENTIONALLY left untouched by that fix (Meta's
-// Graph API has no comparably documented error taxonomy to vet against),
-// so it never sets `result.outcome` - the fallback below (used ONLY for a
-// non-email channel) reproduces its EXACT PRE-EXISTING classification
-// (only a timeout/network error was ever treated as unknown; every other
-// WhatsApp error was, and still is, treated as a definite rejection). This
-// preserves WhatsApp's current safe behavior unchanged, without extending
-// it any new leniency or new risk.
+// WhatsApp (Phase 37): the template sender sets `result.outcome` (a 2xx
+// without a message id, a 5xx/408/409/429, a timeout or a network error is
+// 'unknown'); a result without one (free-text sendWhatsApp) keeps the
+// pre-existing classification - only a timeout/network error is unknown,
+// every other error a definite rejection. Same rule as channelClaims.js
+// channelOutcome(), which the automatic runner uses.
 // Exported for direct, focused unit testing of the fail-closed contract
 // (see scripts/checkOutreachSend.mjs) - same reasoning as sendGate.js's
 // exported resolveEffectiveTestMode: a pure function this important should
@@ -232,8 +232,7 @@ export function classifyOutcome(result, channel) {
   if (channel === 'email') {
     return VALID_OUTCOMES.has(result.outcome) ? result.outcome : 'unknown'
   }
-  if (result.errorCode === 'timeout' || result.errorCode === 'network_error') return 'unknown'
-  return result.ok ? 'accepted' : 'rejected'
+  return channelOutcome(result)
 }
 
 // The main entry point. `credentials` = { whatsapp: {accessToken,
@@ -246,19 +245,22 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
 
   const channel = suggestion?.channel
   const channelCredentials = channel === 'whatsapp' ? credentials.whatsapp : channel === 'email' ? credentials.email : null
-  const credentialsConfigured =
-    channel === 'whatsapp'
-      ? Boolean(channelCredentials?.accessToken && channelCredentials?.phoneNumberId)
-      : channel === 'email'
-        ? Boolean(channelCredentials?.apiKey && channelCredentials?.fromAddress)
-        : false
 
   // Computed with the SAME shared formula evaluateSendGate() itself uses
   // (see sendGate.js's resolveEffectiveTestMode) so the idempotency
   // key/claim scope and the gate's own decision can never disagree about
   // whether this is a test or a production send.
-  const effectiveTestMode = resolveEffectiveTestMode(settings, testMode)
+  const effectiveTestMode = resolveEffectiveTestMode(settings, testMode, channel)
   const idempotencyKey = idempotencyKeyFor(suggestionId, effectiveTestMode)
+
+  // A real WhatsApp first contact must be an approved template (Meta
+  // rejects cold free text), so a production WhatsApp send needs one.
+  const credentialsConfigured =
+    channel === 'whatsapp'
+      ? Boolean(channelCredentials?.accessToken && channelCredentials?.phoneNumberId && (effectiveTestMode || channelCredentials?.templateName))
+      : channel === 'email'
+        ? Boolean(channelCredentials?.apiKey && channelCredentials?.fromAddress)
+        : false
 
   const [leadAttempts, priorSent, emailSuppression] = await Promise.all([
     lead ? fetchLeadAttempts(client, lead.id) : Promise.resolve([]),
@@ -299,11 +301,44 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
     return { ok: false, reasons, testMode: gate.testMode }
   }
 
+  // A real WhatsApp intro also takes the SAME per-destination claim as the
+  // automatic runner (channelClaims.js / claim_channel_send): one intro per
+  // number and per lead, opt-outs, the 24h gap after the first email and
+  // the 20/day cap - whichever path sends first, the other is blocked.
+  let channelClaim = null
+  if (channel === 'whatsapp' && !gate.testMode) {
+    channelClaim = await claimChannelSend(client, {
+      channel,
+      destination: gate.recipient,
+      destinationKind: 'mobile',
+      leadId: lead.id,
+      source: 'manual',
+      suggestionId: suggestion.id,
+    })
+    if (channelClaim.result !== 'claimed') {
+      // No provider call was made - the suggestion key is free to retry
+      // later (e.g. once the gap has passed).
+      await releaseClaimForRetry(client, idempotencyKey)
+      const reasons = [CHANNEL_CLAIM_REASONS[channelClaim.result] || CHANNEL_CLAIM_REASONS.duplicate]
+      await recordBlockedAttempt(client, { suggestion, lead, channel, reasons, idempotencyKey, testMode: gate.testMode, actorUserId })
+      return { ok: false, reasons, testMode: gate.testMode }
+    }
+  }
+
   const finalMessage = suggestion.message_final || suggestion.message_draft
+  const template =
+    channel === 'whatsapp' && channelCredentials.templateName
+      ? {
+          templateName: channelCredentials.templateName,
+          languageCode: channelCredentials.languageCode || 'fa',
+          bodyParameters: introTemplateParameters(channelCredentials.templateParams, lead),
+        }
+      : null
   // Email: the exact body/subject the provider receives (message + opt-out
   // footer), also what the admin saw in the confirmation dialog and what the
-  // audit snapshot records. WhatsApp keeps the plain message.
-  const sentBody = channel === 'email' ? buildEmailBody(finalMessage) : finalMessage
+  // audit snapshot records. WhatsApp: the plain message, or the template
+  // and its values when a template is what Meta receives.
+  const sentBody = channel === 'email' ? buildEmailBody(finalMessage) : template ? describeTemplateSend(template) : finalMessage
   const sentSubject = channel === 'email' ? emailSubjectFor(suggestion) : suggestion.subject_draft || null
   const recipientMasked = maskRecipient(gate.recipient, channel)
 
@@ -334,6 +369,7 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
   } catch (err) {
     // No provider call was ever made - safe to free the claim for a retry.
     await releaseClaimForRetry(client, idempotencyKey)
+    if (channelClaim) await client.from('channel_outreach_messages').update({ status: 'queued', claimed_at: null }).eq('id', channelClaim.id).eq('status', 'sending')
     throw err
   }
 
@@ -348,7 +384,7 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
   const sendFn = getProviderSendFn(channel)
   const providerParams =
     channel === 'whatsapp'
-      ? { accessToken: channelCredentials.accessToken, phoneNumberId: channelCredentials.phoneNumberId, recipient: gate.recipient, message: finalMessage }
+      ? { accessToken: channelCredentials.accessToken, phoneNumberId: channelCredentials.phoneNumberId, recipient: gate.recipient, message: finalMessage, ...template }
       : {
           apiKey: channelCredentials.apiKey,
           fromAddress: channelCredentials.fromAddress,
@@ -406,6 +442,10 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
       .eq('id', attemptRow.id)
     if (attemptUpdateError) throw attemptUpdateError
 
+    if (channelClaim) {
+      await recordChannelSendResult(client, { messageId: channelClaim.id, leadId: lead.id, channel, result, snapshot: sentBody })
+    }
+
     // Same test-vs-production rule as the pre-send 'sending' update above -
     // a test send never mutates the production suggestion row, in success
     // OR failure, known OR unknown outcome.
@@ -428,7 +468,11 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
     // never an unknown/rejected outcome) stamps the lead's own timeline -
     // same "a real contact stamps last_contact_at" rule every other manual
     // outreach action in this app already follows (see
-    // utils/leadStatus.js's CONTACT_ACTIVITY_TYPES).
+    // utils/leadStatus.js's CONTACT_ACTIVITY_TYPES). A WhatsApp
+    // introduction is logged on the timeline but does NOT stamp
+    // last_contact_at - like the automatic runner - so it never makes the
+    // email introduction treat the lead as "already in contact": a lead may
+    // get both (the 24h first-touch gap keeps them apart).
     if (accepted && !gate.testMode) {
       const { error: activityError } = await client.from('lead_activities').insert({
         lead_id: lead.id,
@@ -437,8 +481,10 @@ export async function attemptSend(client, { suggestionId, actorUserId, testMode,
         created_by: actorUserId || null,
       })
       if (activityError) throw activityError
-      const { error: leadUpdateError } = await client.from('sales_leads').update({ last_contact_at: resolvedAtIso }).eq('id', lead.id)
-      if (leadUpdateError) throw leadUpdateError
+      if (channel !== 'whatsapp') {
+        const { error: leadUpdateError } = await client.from('sales_leads').update({ last_contact_at: resolvedAtIso }).eq('id', lead.id)
+        if (leadUpdateError) throw leadUpdateError
+      }
     }
   } catch (err) {
     bookkeepingError = err
