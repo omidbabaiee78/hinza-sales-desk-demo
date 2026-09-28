@@ -47,7 +47,7 @@ function QualificationCell({ row }) {
   )
 }
 
-function ManualTable({ rows, saving, onToggle, onOpenLead, empty }) {
+function ManualTable({ rows, saving, onToggle, onOpenLead, onAddToCrm, empty }) {
   return (
     <table className="data-table">
       <thead>
@@ -87,6 +87,13 @@ function ManualTable({ rows, saving, onToggle, onOpenLead, empty }) {
               <button type="button" className="btn-link" onClick={() => onOpenLead?.(row.lead_id)}>
                 {row.lead?.company_name || '—'}
               </button>
+              {onAddToCrm && (
+                <div>
+                  <button type="button" className="btn-link lead-form-hint" onClick={() => onAddToCrm(row.lead_id)}>
+                    افزودن به CRM
+                  </button>
+                </div>
+              )}
             </td>
             <td>{row.lead?.contact_name || '—'}</td>
             <td>
@@ -104,7 +111,7 @@ function ManualTable({ rows, saving, onToggle, onOpenLead, empty }) {
   )
 }
 
-export default function ManualOutreachPage({ onOpenLead }) {
+export default function ManualOutreachPage({ onOpenLead, onAddToCrm }) {
   const m = useManualOutreach()
 
   return (
@@ -145,10 +152,11 @@ export default function ManualOutreachPage({ onOpenLead }) {
             saving={m.saving}
             onToggle={m.setContacted}
             onOpenLead={onOpenLead}
+            onAddToCrm={onAddToCrm}
             empty={m.total ? 'همهٔ تماس‌های امروز انجام شد.' : 'امروز سرنخ واجد شرایطی با شماره تماس نیست.'}
           />
           <h3>انجام‌شده امروز</h3>
-          <ManualTable rows={m.done} saving={m.saving} onToggle={m.setContacted} onOpenLead={onOpenLead} empty="هنوز موردی علامت نخورده است." />
+          <ManualTable rows={m.done} saving={m.saving} onToggle={m.setContacted} onOpenLead={onOpenLead} onAddToCrm={onAddToCrm} empty="هنوز موردی علامت نخورده است." />
         </>
       )}
     </div>

@@ -60,7 +60,7 @@ export default function AdminAutomationPage({ onOpenLead, onOpenOrder, onOpenInv
     onOpenLead,
     onOpenOrder,
     onOpenInvoice,
-    onOpenSmartSuggestions: () => onNavigate('crm'),
+    onOpenSmartSuggestions: () => onNavigate('crmAdvanced'),
     onApprove: approve,
     onCancel: cancel,
     onSnooze: snooze,
