@@ -12,6 +12,7 @@ export const GROUPS = [
     defaultKey: 'outreach',
     tabs: [
       { key: 'outreach', label: 'ایمیل‌ها' },
+      { key: 'manualOutreach', label: 'تماس دستی روزانه' },
       { key: 'channels', label: 'وضعیت کانال‌ها' },
       { key: 'replies', label: 'نتیجهٔ ارتباط' },
     ],

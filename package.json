@@ -14,7 +14,8 @@
     "check:prospecting": "node scripts/checkProspecting.mjs",
     "check:auto-email": "node scripts/checkAutoEmail.mjs",
     "check:channels": "node scripts/checkChannelOutreach.mjs",
-    "check:contacts": "node scripts/checkContactEnrichment.mjs"
+    "check:contacts": "node scripts/checkContactEnrichment.mjs",
+    "check:manual": "node scripts/checkManualOutreach.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
