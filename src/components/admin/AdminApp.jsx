@@ -20,6 +20,7 @@ import AdminTodayPage from './today/AdminTodayPage'
 import AdminAutomationPage from './automation/AdminAutomationPage'
 import EmailOutreachPage from './outreach/EmailOutreachPage'
 import ChannelOutreachPage from './outreach/ChannelOutreachPage'
+import ManualOutreachPage from './outreach/ManualOutreachPage'
 import AdminReplyInboxPage from './replies/AdminReplyInboxPage'
 import AdminProspectingPage from './prospecting/AdminProspectingPage'
 import AdminMissionPage from './AdminMissionPage'
@@ -186,6 +187,7 @@ export default function AdminApp({ profile, onSignOut, pathname, onNavigateUrl }
         />
       )}
       {activeKey === 'outreach' && <EmailOutreachPage key={pageTab || 'default'} initialTab={pageTab} onOpenLead={openLead} />}
+      {activeKey === 'manualOutreach' && <ManualOutreachPage onOpenLead={openLead} />}
       {activeKey === 'channels' && <ChannelOutreachPage key={pageTab || 'default'} initialFilter={pageTab} onOpenLead={openLead} />}
       {activeKey === 'replies' && <AdminReplyInboxPage onOpenLead={openLead} />}
       {activeKey === 'prospecting' && <AdminProspectingPage key={pageTab || 'default'} initialTab={pageTab} />}
