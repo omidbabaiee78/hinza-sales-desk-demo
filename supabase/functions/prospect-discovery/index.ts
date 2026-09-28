@@ -42,7 +42,7 @@
 // admin-JWT/cron-secret authentication above, which is unchanged.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { runDiscovery, testSource, dryRunQualification, runComprehensiveAudit, promoteEligibleCandidates, searchOfficialSitesForLeads } from '../../../src/prospecting/discoveryPipeline.js'
+import { runDiscovery, testSource, dryRunQualification, runComprehensiveAudit, promoteEligibleCandidates, searchOfficialSitesForLeads, processCandidateBacklog } from '../../../src/prospecting/discoveryPipeline.js'
 import { enrichLeadContacts } from '../../../src/prospecting/leadContactEnrichment.js'
 import { searchWeb } from '../../../src/prospecting/sourceAdapters/serperSearch.js'
 
@@ -208,7 +208,9 @@ Deno.serve(async (req) => {
               ? 'promote_eligible_candidates'
               : body?.mode === 'enrich_contacts'
                 ? 'enrich_contacts'
-                : 'run'
+                : body?.mode === 'process_candidate_backlog'
+                  ? 'process_candidate_backlog'
+                  : 'run'
   } catch {
     sourceId = null
   }
@@ -271,6 +273,17 @@ Deno.serve(async (req) => {
       const durationMs = Date.now() - startedAt
       console.log('prospect-discovery: enrich_contacts finished', JSON.stringify({ leadContacts, leadSiteSearch }))
       return jsonResponse({ ok: true, mode: 'enrich_contacts', lead_contacts: leadContacts, lead_site_search: leadSiteSearch, duration_ms: durationMs })
+    }
+
+    // Settles candidates already found - reads their own websites with the
+    // same per-run limit, timeouts and retries as the daily run, registers
+    // what passes, and searches nothing (processCandidateBacklog()). Cron
+    // secret or admin; resumable, so it is called repeatedly in batches.
+    if (mode === 'process_candidate_backlog') {
+      const run = await processCandidateBacklog(client, { createdBy: auth.userId })
+      const durationMs = Date.now() - startedAt
+      console.log('prospect-discovery: process_candidate_backlog finished', JSON.stringify(run?.skipped ? run : run?.summary?.siteVerification))
+      return jsonResponse({ ok: true, mode: 'process_candidate_backlog', ...(run?.skipped ? run : { run_id: run.id, status: run.status, site_verification: run.summary?.siteVerification }), duration_ms: durationMs })
     }
 
     if (mode === 'promote_eligible_candidates') {

@@ -1,12 +1,24 @@
 import { useState } from 'react'
 import { supabase } from '../../../lib/supabaseClient'
 import { fetchCandidateEvidence } from '../../../prospecting/discoveryPipeline'
-import { candidateStatusLabel, confidenceLabel, evidenceTypeLabel } from '../../../prospecting/prospectingLabels'
+import { confidenceLabel, evidenceTypeLabel, queueStateLabel, reviewReasonLabel } from '../../../prospecting/prospectingLabels'
+import { MAX_SITE_FETCH_ATTEMPTS } from '../../../prospecting/candidateQueue'
 import { suggestProductFit } from '../../../prospecting/productFit'
 import { formatJalaliDateTime } from '../../../utils/formatters'
 import EditCandidateModal from './EditCandidateModal'
 
-export default function ProspectCandidateCard({ candidate, handlers, busy }) {
+// When the scheduler is expected to read this candidate's website next.
+function queueTiming(queueState) {
+  if (queueState?.key !== 'waiting' && queueState?.key !== 'eligible') return null
+  if (!queueState.expectedAt) return 'اجرای خودکار خاموش است؛ تا روشن شدن آن بررسی نمی‌شود.'
+  const when = formatJalaliDateTime(queueState.expectedAt)
+  if (queueState.reason === 'retry') {
+    return `وب‌سایت دفعهٔ قبل باز نشد؛ تلاش ${queueState.attempt} از ${MAX_SITE_FETCH_ATTEMPTS}، در اولین اجرای خودکار از ${when}.`
+  }
+  return `نوبت ${queueState.queuePosition} در صف بررسی خودکار؛ تخمین زمان بررسی: ${when}`
+}
+
+export default function ProspectCandidateCard({ candidate, queueState, handlers, busy }) {
   const [expanded, setExpanded] = useState(false)
   const [evidence, setEvidence] = useState(null)
   const [loadingEvidence, setLoadingEvidence] = useState(false)
@@ -30,13 +42,17 @@ export default function ProspectCandidateCard({ candidate, handlers, busy }) {
   }
 
   const fit = evidence ? suggestProductFit(evidence) : null
-  const reasonText = candidate.qualification_reason || candidate.rejection_reason || candidate.match_explanation
+  const attention = queueState?.key === 'attention'
+  const reasonText = attention
+    ? [reviewReasonLabel(queueState.reason), candidate.match_explanation].filter(Boolean).join(' ')
+    : candidate.rejection_reason || candidate.match_explanation || candidate.qualification_reason
+  const timing = queueTiming(queueState)
 
   return (
     <div className="prospect-card">
       <div className="prospect-card-main">
         <div className="outreach-card-top">
-          <span className="automation-card-type">{candidateStatusLabel(candidate.status)}</span>
+          <span className="automation-card-type">{queueStateLabel(queueState?.key)}</span>
           {candidate.overall_score != null && <span className="automation-priority-badge tone-contacted">امتیاز {candidate.overall_score}</span>}
           {candidate.confidence && <span className="outreach-channel-badge">{confidenceLabel(candidate.confidence)}</span>}
         </div>
@@ -45,6 +61,7 @@ export default function ProspectCandidateCard({ candidate, handlers, busy }) {
           <div className="today-item-context">{[candidate.city, candidate.industry_guess].filter(Boolean).join(' — ')}</div>
         )}
         {reasonText && <div className="automation-card-reason">{reasonText}</div>}
+        {timing && <div className="lead-form-hint">{timing}</div>}
 
         <div className="automation-card-meta">
           {candidate.mobile && <span>موبایل: {candidate.mobile}</span>}

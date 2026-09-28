@@ -197,7 +197,10 @@ export const TARGET_INDUSTRIES = [
 // "تولید کننده" (space-separated) phrase instead - it still catches the
 // real کادوس پلاستیک آریا wording ("تولید کننده انواع قطعات...") without
 // matching every generic mention of "تولید" anywhere.
-export const MANUFACTURING_INDICATOR_TERMS = ['کارخانه', 'صنایع', 'تولیدی', 'تولیدکننده', 'تولید کننده', 'تولید و', 'کارگاه تولید', 'گروه صنعتی']
+// The plural («یکی از تولیدکنندگان لوله») and verb («... را تولید می‌کند»)
+// forms say the same as «تولیدکننده»; without them real manufacturers'
+// ordinary «مشاوره»/«فروشگاه» wording was read as a strong negative.
+export const MANUFACTURING_INDICATOR_TERMS = ['کارخانه', 'صنایع', 'تولیدی', 'تولیدکننده', 'تولید کننده', 'تولیدکنندگان', 'تولید کنندگان', 'تولید می کند', 'تولید می کنیم', 'تولید و', 'کارگاه تولید', 'گروه صنعتی']
 export const GENERIC_POLYMER_TERMS = ['پلاستیک', 'پلیمر', 'پلی اتیلن', 'پی وی سی', 'pvc', 'پلی پروپیلن']
 
 // Companies that MAKE masterbatch/pigments themselves are a possible

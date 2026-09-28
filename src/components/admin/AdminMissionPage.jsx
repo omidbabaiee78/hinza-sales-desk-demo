@@ -4,17 +4,26 @@ import { useChannelOutreach } from '../../hooks/useChannelOutreach'
 import { countSentToday, resolveDailyCap } from '../../outreach/autoEmail'
 import { supabase } from '../../lib/supabaseClient'
 import { formatJalaliDateTime } from '../../utils/formatters'
-import { runStatusLabel } from '../../prospecting/prospectingLabels'
+import { runStatusLabel, QUEUE_STATE_LABELS } from '../../prospecting/prospectingLabels'
+import { buildCandidateQueue } from '../../prospecting/candidateQueue'
 import ErrorBanner from '../common/ErrorBanner'
 import { MORE_TOOLS } from './adminSections'
 import './today/Today.css'
 
-const CANDIDATE_STATUSES = ['promoted', 'duplicate', 'manual_review']
-
-async function countCandidates(status) {
-  const { count, error } = await supabase.from('prospect_candidates').select('id', { count: 'exact', head: true }).eq('status', status)
+// Only open candidates can need attention or be waiting; the queue module
+// decides which (the same rule the prospecting page shows).
+async function countOpenCandidates() {
+  const { data, error } = await supabase
+    .from('prospect_candidates')
+    .select('id, status, website, first_seen_at, created_at, site_checked_at, site_check_status, site_check_version, site_check_attempts, site_review_reason')
+    .in('status', ['manual_review', 'qualified'])
   if (error) throw error
-  return count || 0
+  const counts = { attention: 0, waiting: 0 }
+  for (const state of buildCandidateQueue(data || []).values()) {
+    if (state.key === 'attention') counts.attention += 1
+    else counts.waiting += 1
+  }
+  return counts
 }
 
 function Stat({ value, label, hint, tone = 'tone-contacted', onClick }) {
@@ -37,16 +46,16 @@ export default function AdminMissionPage({ onNavigate }) {
 
   const loadDiscovery = useCallback(async () => {
     try {
-      const [{ data, error }, ...counts] = await Promise.all([
+      const [{ data, error }, counts] = await Promise.all([
         supabase
           .from('prospect_discovery_runs')
           .select('status, started_at, candidates_found, candidates_created, candidates_promoted, duplicates_detected, errors_count')
           .order('started_at', { ascending: false })
           .limit(1),
-        ...CANDIDATE_STATUSES.map(countCandidates),
+        countOpenCandidates(),
       ])
       if (error) throw error
-      setDiscovery({ run: data?.[0] || null, counts: Object.fromEntries(CANDIDATE_STATUSES.map((s, i) => [s, counts[i]])) })
+      setDiscovery({ run: data?.[0] || null, counts })
       setDiscoveryError('')
     } catch {
       setDiscoveryError('وضعیت کشف مشتری بارگذاری نشد.')
@@ -150,8 +159,8 @@ export default function AdminMissionPage({ onNavigate }) {
       <div className="today-summary-grid">
         <Stat value={dash(email.loading, email.entries.length)} label="سرنخ ثبت‌شده" hint="شرکت‌هایی که در فهرست سرنخ‌ها هستند" onClick={() => onNavigate('leads')} />
         <Stat value={dash(channels.loading, channels.counts.withContact)} label="سرنخ دارای اطلاعات تماس" hint="ایمیل، موبایل یا شمارهٔ پیام‌رسان" onClick={() => onNavigate('channels', { tab: 'contact' })} />
-        <Stat value={discovery.counts ? discovery.counts.manual_review : '—'} tone="tone-offer" label="نیازمند بررسی شما" hint="شرکت‌های پیداشده‌ای که سیستم دربارهٔ آن‌ها مطمئن نیست" onClick={() => onNavigate('prospecting', { tab: 'manual_review' })} />
-        <Stat value={discovery.counts ? discovery.counts.duplicate : '—'} label="تکراری (ثبت نشد)" hint="قبلاً در فهرست بوده‌اند" onClick={() => onNavigate('prospecting', { tab: 'duplicate' })} />
+        <Stat value={discovery.counts ? discovery.counts.attention : '—'} tone="tone-offer" label={QUEUE_STATE_LABELS.attention} hint="فقط مواردی که سیستم خودش نمی‌تواند تصمیم بگیرد" onClick={() => onNavigate('prospecting', { tab: 'attention' })} />
+        <Stat value={discovery.counts ? discovery.counts.waiting : '—'} label="در صف بررسی خودکار" hint="کاری از شما لازم نیست؛ سیستم خودش وب‌سایت‌ها را می‌خواند" onClick={() => onNavigate('prospecting', { tab: 'waiting' })} />
       </div>
 
       <h3 className="admin-overview-heading">ایمیل معرفی</h3>

@@ -1,11 +1,12 @@
 import { fetchPageSafely, identitySignalsFromHtml } from './websiteEnrichment.js'
 import { extractEvidence, matchedEntityType, matchedBuyerFit, matchedIdentity, matchedHasStrongNegative, replaceIdentityEvidence } from './evidenceEngine.js'
-import { isNonCompanyEntityType } from './entityClassification.js'
+import { isNonCompanyEntityType, isHostedByPortal } from './entityClassification.js'
 import { scoreCandidate } from './scoringEngine.js'
 import { qualifyCandidate } from './qualification.js'
 import { isPromotableIdentity, isPlausibleOrganizationName, resolveVerifiedIdentity, IDENTITY_SOURCES } from './identityResolution.js'
 import { normalizedNameKey, normalizeSearchText } from './normalization.js'
 import { lookupCompanyEmail, LOOKUP_LIMITS, visibleText } from '../outreach/emailDiscovery.js'
+import { MANUFACTURING_INDICATOR_TERMS, findMatchingKeywords } from './industryTaxonomy.js'
 
 // ---------------------------------------------------------------------------
 // Reading a discovered company's OWN website before deciding on it.
@@ -32,6 +33,9 @@ import { lookupCompanyEmail, LOOKUP_LIMITS, visibleText } from '../outreach/emai
 // name read from its own site. No score threshold and no human approval.
 // Nothing is guessed: every value comes from pages the company published.
 // ---------------------------------------------------------------------------
+
+const HOMEPAGE_EVIDENCE_CHARS = 3000
+const UNAVAILABLE_PAGE_TITLE = /(account suspended|bot verification|under maintenance|is under construction|coming soon|403 forbidden|404 not found|service unavailable|just a moment)/i
 
 function originOf(url) {
   try {
@@ -78,7 +82,15 @@ const MACHINERY_SELF_DESCRIPTION = /(ماشین|دستگاه|machine|machinery)/
 // «ثبت شغل» and similar business-registration / listing sites.
 // ... and exhibition platforms (aria24.com «سامانه هوشمندسازی نمایشگاهی»),
 // which list exhibitors' products.
-const LISTING_SELF_DESCRIPTION = /(ثبت شغل|ثبت مشاغل|ثبت کسب و کار|ثبت رایگان|دایرکتوری|راهنمای مشاغل|نمایشگاهی|برگزاری نمایشگاه|نمایشگاه مجازی|نمایشگاه آنلاین)/
+// ... and portals («پرتال اینترنتی شهرک صنعتی جی», jeyportal.ir).
+const LISTING_SELF_DESCRIPTION = /(ثبت شغل|ثبت مشاغل|ثبت کسب و کار|ثبت رایگان|دایرکتوری|راهنمای مشاغل|نمایشگاهی|برگزاری نمایشگاه|نمایشگاه مجازی|نمایشگاه آنلاین|پرتال|portal)/i
+// «نرم افزار انبارداری تحت وب» (anbaronline.ir) - software, not a
+// polymer-product business, whatever its pages mention.
+const UNRELATED_SELF_DESCRIPTION = /(نرم ?افزار|software)/i
+// A homepage with less visible text than this is a script-rendered or
+// image-only page: nothing on it can be judged, so it goes to a person
+// instead of being called "not polymer".
+const MIN_READABLE_HOMEPAGE_CHARS = 200
 // «فروش انواع پلی اتیلن صنعتی» - a raw-polymer seller neither makes nor
 // uses polymer products.
 const RAW_MATERIAL_TRADER = /(فروش|عرضه|واردات|وارد کننده|پخش|بازرگانی)\s+(انواع\s+)?(مواد اولیه|گرانول|پلی اتیلن|پلی پروپیلن|پلیمر|پی وی سی|pvc)/i
@@ -91,7 +103,7 @@ const RAW_MATERIAL_TRADER = /(فروش|عرضه|واردات|وارد کننده
 //     homepage text (a portal's homepage is about news/ads, not polymer
 //     products; a manufacturer's names its products),
 //   - an Iranian signal: .ir domain, Persian text, or a mention of Iran.
-export function siteOwnSignals({ candidate, signals, homepageText = '' }) {
+export function siteOwnSignals({ candidate, signals, homepageText = '', homepageHtml = '' }) {
   const title = [signals.jsonLdOrganizationName, signals.ogSiteName, signals.titleText].filter(Boolean).join(' ')
   const head = { ...candidate, raw_name: title, canonical_name: signals.ogSiteName || signals.titleText || '', business_description: signals.description || '', raw_data: null, source_url: candidate.website }
   const pageEvidence = extractEvidence(head)
@@ -99,14 +111,17 @@ export function siteOwnSignals({ candidate, signals, homepageText = '' }) {
   const text = [title, signals.description, homepageText].filter(Boolean).join(' ')
   const reasons = []
   if (isNonCompanyEntityType(matchedEntityType(pageEvidence))) reasons.push('site_not_company')
-  if (!hasIndustryEvidence(pageEvidence) && !hasIndustryEvidence(bodyEvidence)) reasons.push('no_polymer_signal_on_site')
+  if (!hasIndustryEvidence(pageEvidence) && !hasIndustryEvidence(bodyEvidence)) {
+    reasons.push(String(homepageText).trim().length < MIN_READABLE_HOMEPAGE_CHARS ? 'site_unreadable' : 'no_polymer_signal_on_site')
+  }
   if (!/\.ir$/i.test(candidate.domain || '') && !IRAN_SIGNAL.test(text)) reasons.push('not_iranian')
   // What the site says it IS, from its own name/title/description only (a
   // manufacturer's body text may well mention its machines or materials):
   const selfDescription = normalizeSearchText([title, signals.description].filter(Boolean).join(' '))
   if (MACHINERY_SELF_DESCRIPTION.test(normalizeSearchText(title))) reasons.push('machinery_seller')
-  if (LISTING_SELF_DESCRIPTION.test(selfDescription)) reasons.push('listing_site')
+  if (LISTING_SELF_DESCRIPTION.test(selfDescription) || isHostedByPortal(homepageHtml, candidate.domain)) reasons.push('listing_site')
   if (RAW_MATERIAL_TRADER.test(selfDescription)) reasons.push('raw_material_trader')
+  if (UNRELATED_SELF_DESCRIPTION.test(selfDescription)) reasons.push('unrelated_business')
   return { ok: reasons.length === 0, reasons }
 }
 
@@ -163,6 +178,41 @@ export function isSiteConfirmedBuyer(evidence) {
   return isReasonableProspect(evidence) && matchedBuyerFit(evidence) === 'high' && isPromotableIdentity(matchedIdentity(evidence))
 }
 
+// What the site check decided for a candidate it does not register:
+// 'reject' when the site itself shows it is not a prospect (a machinery
+// seller, a portal, a competitor, no polymer products), 'review' when only
+// a person can tell (unreadable site, no clear company name, no Iranian
+// signal, too little product evidence). -> { action, reason }
+//
+// 'conflicting_signals': a company site naming polymer products and saying
+// it makes them, where one word elsewhere («زیبایی» of a floor covering, a
+// footer link to «انجمن ...», «مشاوره صنعتی») reads as not a buyer. Only a
+// person can tell which is right; a machinery seller, portal, competitor
+// or shop without production wording is still rejected.
+const SITE_REJECT_REASONS = ['machinery_seller', 'listing_site', 'raw_material_trader', 'unrelated_business', 'site_not_company', 'no_polymer_signal_on_site']
+
+export function siteDecision({ siteOwn, evidence, statesProduction = false }) {
+  const reject = SITE_REJECT_REASONS.find((reason) => siteOwn.reasons.includes(reason))
+  if (reject) return { action: 'reject', reason: reject }
+  if (siteOwn.reasons.includes('site_unreadable')) return { action: 'review', reason: 'site_unreadable' }
+  const buyerFit = matchedBuyerFit(evidence)
+  if (buyerFit === 'not_buyer' && statesProduction && isConflictingNonBuyer(evidence)) return { action: 'review', reason: 'conflicting_signals' }
+  if (matchedHasStrongNegative(evidence) || buyerFit === 'not_buyer' || buyerFit === 'low') return { action: 'reject', reason: 'not_buyer' }
+  if (matchedEntityType(evidence) !== 'direct_company') return { action: 'reject', reason: 'site_not_company' }
+  if (siteOwn.reasons.includes('not_iranian')) return { action: 'review', reason: 'not_iranian' }
+  if ((buyerFit !== 'high' && buyerFit !== 'medium') || !hasIndustryEvidence(evidence)) return { action: 'review', reason: 'insufficient_evidence' }
+  if (!hasUsableCompanyName(matchedIdentity(evidence))) return { action: 'review', reason: 'name_unclear' }
+  return { action: 'review', reason: 'insufficient_evidence' }
+}
+
+function isConflictingNonBuyer(evidence) {
+  return (
+    matchedEntityType(evidence) === 'direct_company' &&
+    evidence.some((e) => e.evidenceType === 'industry_keyword') &&
+    !evidence.some((e) => e.evidenceType === 'non_buyer_organization' && e.meta?.nonBuyerKey === 'machinery_supplier')
+  )
+}
+
 // Candidates the site step never needs to load: a page the snippet already
 // shows is an article/directory/marketplace/social/video page.
 export function snippetSaysNotCompany(candidate) {
@@ -201,8 +251,12 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
 
   const home = await cachedFetch(homepage)
   if (!home.ok) return { ok: false, status: 'fetch_failed', ...emailFields }
+  // A host's placeholder («Account Suspended», a bot check, maintenance) is
+  // not the company's page - the same as not loading; retried later.
+  if (UNAVAILABLE_PAGE_TITLE.test(identitySignalsFromHtml(home.text).titleText || '')) return { ok: false, status: 'fetch_failed', ...emailFields }
 
   const signals = identitySignalsFromHtml(home.text)
+  const homepageText = visibleText(home.text).slice(0, 8000)
   // Theme placeholders: rashaplast.ir's JSON-LD and og:site_name both say
   // "recook". A Latin-only name sharing nothing with the domain is not
   // this company's name - fall through to the next marker (the title).
@@ -215,6 +269,24 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
   const baseline = matchedIdentity(evidence)
   const identity = resolveVerifiedIdentity({ domain: candidate.domain, signals, baseline })
   if (identity !== baseline) evidence = replaceIdentityEvidence(evidence, identity)
+  // Title and description often name no product («سیبن», «فوم ایران»)
+  // while the homepage lists them. When the title alone does not make it a
+  // prospect only for want of product evidence, the homepage's opening
+  // text is read as its description too - accepted only if every condition
+  // then holds. Never overrides what the title says against it (a shop, a
+  // competitor, a strong negative).
+  const titleFit = matchedBuyerFit(evidence)
+  if (
+    !isReasonableProspect(evidence) &&
+    matchedEntityType(evidence) === 'direct_company' &&
+    !matchedHasStrongNegative(evidence) &&
+    titleFit !== 'not_buyer' &&
+    titleFit !== 'low'
+  ) {
+    const withHomepage = { ...enriched, business_description: [enriched.business_description, homepageText.slice(0, HOMEPAGE_EVIDENCE_CHARS)].filter(Boolean).join(' — ') }
+    const homepageEvidence = replaceIdentityEvidence(extractEvidence(withHomepage), identity)
+    if (isReasonableProspect(homepageEvidence)) evidence = homepageEvidence
+  }
   if (hasUsableCompanyName(identity)) {
     const name = tidyCompanyName(identity.resolvedName)
     enriched = { ...enriched, canonical_name: name, normalized_name_key: normalizedNameKey(name) }
@@ -237,7 +309,9 @@ export async function verifyCandidateSite({ candidate, settings, fetchPage = (ur
   // Whatever rule qualifies it, the SITE ITSELF must look like an Iranian
   // company working with polymer products - not a portal, classifieds or
   // news site that happened to list one, and not a foreign supplier.
-  const siteOwn = siteOwnSignals({ candidate, signals, homepageText: visibleText(home.text).slice(0, 8000) })
+  const siteOwn = siteOwnSignals({ candidate, signals, homepageText, homepageHtml: home.text })
   const promotable = siteOwn.ok && ((qualification.status === 'qualified' && qualification.autoPromotable) || isReasonableProspect(evidence))
-  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, siteOwn, phoneSourceUrl, ...emailFields }
+  const statesProduction = findMatchingKeywords(normalizeSearchText(enriched.business_description), MANUFACTURING_INDICATOR_TERMS.map((k) => normalizeSearchText(k))).length > 0
+  const decision = promotable ? { action: 'promote', reason: null } : siteDecision({ siteOwn, evidence, statesProduction })
+  return { ok: true, status: 'checked', candidate: enriched, evidence, scores, qualification, promotable, decision, siteOwn, phoneSourceUrl, ...emailFields }
 }

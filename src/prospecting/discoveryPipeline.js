@@ -20,6 +20,8 @@ import { fetchIdentitySignals } from './websiteEnrichment.js'
 import { serializePromotedLead } from './promotion.js'
 import { DEFAULT_QUERY_TEMPLATES as DEFAULT_SERPER_QUERY_TEMPLATES, searchWeb } from './sourceAdapters/serperSearch.js'
 import { verifyCandidateSite, snippetSaysNotCompany } from './siteVerification.js'
+import { SITE_CHECK_VERSION, MAX_SITE_CHECKS_PER_RUN, MAX_SITE_FETCH_ATTEMPTS, isSitePending, compareSiteQueue, nextFetchAttempt } from './candidateQueue.js'
+import { siteRejectReasonLabel, reviewReasonLabel } from './prospectingLabels.js'
 import { findLeadEmailViaSearch, LEAD_SITE_SEARCH_STATUSES } from './leadSiteSearch.js'
 import { tehranDateKey } from '../utils/leadFollowUp.js'
 import { enrichLeadContacts, contactPatchFor, contactSourcesFor, takenContacts } from './leadContactEnrichment.js'
@@ -80,12 +82,13 @@ const LEAD_ENRICH_PHASE_END = 0.9
 // search involved - see leadContactEnrichment.js).
 const MAX_LEAD_ENRICHMENTS_PER_RUN = 8
 const SITE_VERIFY_CONCURRENCY = 4
-// Websites read per run - page parsing is the run's main CPU cost, and
-// Edge Functions have a CPU-time limit (each run also reads up to
-// MAX_LEAD_ENRICHMENTS_PER_RUN lead websites). 10 runs a day = 120 sites.
-const MAX_SITE_CHECKS_PER_RUN = 12
-// Days before a website that failed to load is tried again.
-const SITE_FETCH_RETRY_DAYS = 3
+// Websites read per run: MAX_SITE_CHECKS_PER_RUN (candidateQueue.js) - page
+// parsing is the run's main CPU cost, and Edge Functions have a CPU-time
+// limit (each run also reads up to MAX_LEAD_ENRICHMENTS_PER_RUN lead
+// websites). 10 runs a day = 120 sites. One site's whole check (home,
+// contact and about pages) is abandoned after this long and counted as a
+// failed load, retried later (candidateQueue.js).
+const SITE_CHECK_TIMEOUT_MS = 25 * 1000
 // Web searches per run for leads whose recorded website is not their own.
 const MAX_LEAD_SITE_SEARCHES_PER_RUN = 4
 
@@ -418,12 +421,16 @@ async function processCandidate(client, { rawItem, source, adapter, run, setting
     if (existingSelf) {
       const { data: existingRow, error: fetchError } = await client
         .from('prospect_candidates')
-        .select('status')
+        .select('status, site_checked_at, site_check_version')
         .eq('id', existingSelf.id)
         .single()
       if (fetchError) throw fetchError
 
-      if (existingRow.status === 'promoted' || existingRow.status === 'duplicate') {
+      // Also metadata only: a candidate whose own website was already read
+      // under the current rules - its site decision (or its place in the
+      // retry queue) outranks a fresh read of the same search snippet.
+      const siteDecided = Boolean(existingRow.site_checked_at) && (existingRow.site_check_version ?? 1) >= SITE_CHECK_VERSION
+      if (existingRow.status === 'promoted' || existingRow.status === 'duplicate' || siteDecided) {
         const { data: updated, error } = await client
           .from('prospect_candidates')
           .update({ last_seen_at: new Date().toISOString(), discovery_run_id: run.id, updated_at: new Date().toISOString() })
@@ -594,33 +601,57 @@ async function countEmailsFoundToday(client, now = new Date()) {
   return (data || []).filter((l) => l.email_lookup_status === 'found' && l.email_lookup_at && tehranDateKey(new Date(l.email_lookup_at)) === today).length
 }
 
-function isSitePending(candidate, now) {
-  if (!candidate.website) return false
-  if (!candidate.site_checked_at) return true
-  if (candidate.site_check_status !== 'fetch_failed') return false
-  return now - new Date(candidate.site_checked_at).getTime() >= SITE_FETCH_RETRY_DAYS * 24 * 60 * 60 * 1000
+function withTimeout(promise, ms) {
+  let timer
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, status: 'fetch_failed', timedOut: true }), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
 }
 
-// Reads each not-yet-checked candidate's own website (siteVerification.js),
-// re-qualifies it with that text, and promotes the ones the site confirms,
-// with the email the site publishes. Newest discoveries first; stops at the
-// deadline or when the run's promotion budget is used up (the rest stay
-// pending for the next run). dryRun: reads and counts, writes nothing.
-export async function verifyPendingCandidateSites(client, { settings, deadline, createdBy = null, dryRun = false, promotions, fetchPage, now = Date.now() }) {
-  const summary = { pending: 0, checked: 0, promoted: 0, wouldPromote: 0, promotedWithEmail: 0, emailsFound: 0, duplicates: 0, errors: 0, byStatus: {}, stoppedBy: null }
-  const [candidatesRes, leadsRes, sourcesRes] = await Promise.all([
+// Reads each waiting candidate's own website (siteVerification.js) and
+// settles it: registers the ones the site confirms (with the email the site
+// publishes), rejects what the site shows is not a prospect, and sends to
+// review only what a person must decide (site_review_reason). Oldest
+// discoveries first (candidateQueue.js); stops at the deadline, after
+// maxChecks site loads, or when the run's promotion budget is used up - the
+// rest stay waiting for the next run. dryRun: reads and counts, writes
+// nothing.
+export async function verifyPendingCandidateSites(
+  client,
+  { settings, deadline, createdBy = null, dryRun = false, promotions, fetchPage, now = Date.now(), maxChecks = MAX_SITE_CHECKS_PER_RUN, siteCheckTimeoutMs = SITE_CHECK_TIMEOUT_MS },
+) {
+  const summary = { pending: 0, checked: 0, promoted: 0, wouldPromote: 0, promotedWithEmail: 0, emailsFound: 0, duplicates: 0, rejected: 0, review: 0, errors: 0, byStatus: {}, stoppedBy: null, remaining: 0 }
+  const [candidatesRes, leadsRes, companiesRes, sourcesRes] = await Promise.all([
     client.from('prospect_candidates').select('*').in('status', ['manual_review', 'qualified']),
-    client.from('sales_leads').select('id, email, website, mobile, phone'),
+    client.from('sales_leads').select('id, company_name, email, website, mobile, phone'),
+    client.from('companies').select('id, name'),
     client.from('prospect_sources').select('id, name'),
   ])
   if (candidatesRes.error) throw candidatesRes.error
   if (leadsRes.error) throw leadsRes.error
+  if (companiesRes.error) throw companiesRes.error
   if (sourcesRes.error) throw sourcesRes.error
 
-  const pending = (candidatesRes.data || [])
-    .filter((c) => isSitePending(c, now))
-    .sort((a, b) => String(b.first_seen_at || b.created_at || '').localeCompare(String(a.first_seen_at || a.created_at || '')))
+  const pending = (candidatesRes.data || []).filter((c) => isSitePending(c, now)).sort(compareSiteQueue)
   summary.pending = pending.length
+  // Names of registered leads/companies (and of leads this run registers):
+  // a site whose company name closely resembles one may be the same
+  // company under another domain - a person decides. Checked afresh here,
+  // so a resemblance to a candidate that was never registered no longer
+  // holds anyone back.
+  const nameRecords = [
+    ...(leadsRes.data || []).map((l) => ({ kind: 'lead', id: l.id, name: l.company_name, keys: buildMatchKeys({ nameKey: normalizedNameKey(l.company_name) }) })),
+    ...(companiesRes.data || []).map((c) => ({ kind: 'company', id: c.id, name: c.name, keys: buildMatchKeys({ nameKey: normalizedNameKey(c.name) }) })),
+  ].filter((r) => r.keys.nameKey)
+  const similarName = (...nameKeys) => {
+    for (const nameKey of nameKeys) {
+      if (!nameKey) continue
+      const match = resolveDuplicate(buildMatchKeys({ nameKey }), nameRecords)
+      if (match) return { ...match, name: nameRecords.find((r) => r.id === match.id && r.kind === match.kind)?.name }
+    }
+    return null
+  }
   const leadIdByEmail = new Map((leadsRes.data || []).filter((l) => normalizeEmail(l.email)).map((l) => [normalizeEmail(l.email), l.id]))
   const leadIdByHost = new Map((leadsRes.data || []).filter((l) => hostOfUrl(l.website)).map((l) => [hostOfUrl(l.website), l.id]))
   // A mobile the site publishes that is already on a lead means the same
@@ -635,7 +666,7 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
     if (dryRun) return null
     const { data, error } = await client
       .from('prospect_candidates')
-      .update({ site_checked_at: new Date(now).toISOString(), updated_at: new Date().toISOString(), ...patch })
+      .update({ site_checked_at: new Date(now).toISOString(), site_check_version: SITE_CHECK_VERSION, updated_at: new Date().toISOString(), ...patch })
       .eq('id', candidate.id)
       .select('*')
       .single()
@@ -643,37 +674,76 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
     return data
   }
 
+  // Settled as not a prospect (rejection_reason says why).
+  async function reject(candidate, reason, patch = {}) {
+    count(reason)
+    summary.rejected += 1
+    await markChecked(candidate, { status: 'rejected', rejection_reason: siteRejectReasonLabel(reason), site_review_reason: null, ...patch })
+  }
+
+  // A load that failed (or took too long) is retried by a later run; the
+  // last allowed attempt hands it to a person.
+  async function failedLoad(candidate, status) {
+    const attempts = nextFetchAttempt(candidate)
+    const givingUp = attempts >= MAX_SITE_FETCH_ATTEMPTS
+    count(givingUp ? 'site_unreachable' : status)
+    if (givingUp) summary.review += 1
+    await markChecked(candidate, {
+      site_check_status: 'fetch_failed',
+      site_check_attempts: attempts,
+      ...(givingUp ? { status: 'manual_review', site_review_reason: 'site_unreachable', qualification_reason: reviewReasonLabel('site_unreachable') } : {}),
+    })
+  }
+
   async function handle(candidate) {
     if (snippetSaysNotCompany(candidate)) {
-      count('not_company')
-      await markChecked(candidate, { site_check_status: 'not_company' })
+      await reject(candidate, 'not_company_page', { site_check_status: 'not_company' })
       return
     }
-    const result = await verifyCandidateSite({ candidate, settings, ...(fetchPage ? { fetchPage } : {}) })
+    const result = await withTimeout(verifyCandidateSite({ candidate, settings, ...(fetchPage ? { fetchPage } : {}) }), siteCheckTimeoutMs)
     summary.checked += 1
     if (!result.ok) {
-      count(result.status)
-      await markChecked(candidate, { site_check_status: result.status })
+      if (result.status === 'not_company') await reject(candidate, 'not_company', { site_check_status: 'not_company' })
+      else if (result.status === 'fetch_failed') await failedLoad(candidate, result.timedOut ? 'timed_out' : 'fetch_failed')
+      else {
+        count(result.status)
+        summary.review += 1
+        await markChecked(candidate, { site_check_status: result.status, status: 'manual_review', site_review_reason: 'no_website', qualification_reason: reviewReasonLabel('no_website') })
+      }
       return
     }
     const email = normalizeEmail(result.email)
     if (email) summary.emailsFound += 1
     const siteMobile = result.mobiles?.[0] ? normalizeMobile(result.mobiles[0].number) : null
     const matchedLeadId = (email && leadIdByEmail.get(email)) || leadIdByHost.get(hostOfUrl(candidate.website)) || (siteMobile && leadIdByMobile.get(siteMobile)) || null
-    // A fuzzy name match to another lead/candidate stays for review, as in
-    // processCandidate().
-    const promote = result.promotable && !matchedLeadId && !candidate.match_explanation
+    const enriched = result.candidate
+    const lookalike = !matchedLeadId && result.promotable ? similarName(enriched.normalized_name_key, candidate.normalized_name_key) : null
+    const promote = result.promotable && !matchedLeadId && !lookalike
     if (promote && promotions.remaining <= 0) {
       summary.stoppedBy = summary.stoppedBy || 'promotion_budget'
       return
     }
     if (promote) promotions.remaining -= 1
     if (email && promote) leadIdByEmail.set(email, 'this-run')
+    if (promote && enriched.normalized_name_key) {
+      nameRecords.push({ kind: 'lead', id: null, name: enriched.canonical_name, keys: buildMatchKeys({ nameKey: enriched.normalized_name_key }) })
+    }
 
-    const enriched = result.candidate
-    const status = matchedLeadId ? 'duplicate' : promote ? 'qualified' : result.qualification.status
-    count(matchedLeadId ? 'duplicate' : promote ? 'promoted' : status)
+    // The site's own verdict on a candidate it does not register
+    // (siteVerification.js siteDecision): rejected, or a named reason only
+    // a person can settle.
+    const decision = lookalike ? { action: 'review', reason: 'possible_duplicate' } : result.decision || { action: 'review', reason: 'other' }
+    const status = matchedLeadId ? 'duplicate' : promote ? 'qualified' : decision.action === 'reject' ? 'rejected' : 'manual_review'
+    const reviewReason = status === 'manual_review' ? decision.reason : null
+    count(matchedLeadId ? 'duplicate' : promote ? 'promoted' : status === 'rejected' ? decision.reason : `review:${decision.reason}`)
     if (matchedLeadId) summary.duplicates += 1
+    if (status === 'rejected') summary.rejected += 1
+    if (status === 'manual_review') summary.review += 1
+    const matchExplanation = matchedLeadId
+      ? 'همین وب‌سایت یا ایمیل قبلاً برای یک سرنخ ثبت شده است.'
+      : lookalike
+        ? `${lookalike.explanation.replace(' - نیازمند بررسی دستی', '')} با «${lookalike.name}» که قبلاً ثبت شده است.`
+        : null
     const updated = await markChecked(candidate, {
       site_check_status: result.emailStatus === 'found' ? 'email_found' : result.emailStatus || 'checked',
       site_email_source_url: result.emailSourceUrl,
@@ -689,10 +759,13 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
       overall_score: result.scores.overallScore,
       confidence: result.scores.confidence,
       status,
-      qualification_reason: status === 'rejected' ? null : result.qualification.reason,
-      rejection_reason: status === 'rejected' ? result.qualification.reason : null,
-      matched_lead_id: matchedLeadId || candidate.matched_lead_id || null,
-      match_explanation: matchedLeadId ? 'همین وب‌سایت یا ایمیل قبلاً برای یک سرنخ ثبت شده است.' : candidate.match_explanation || null,
+      site_review_reason: reviewReason,
+      site_check_attempts: 0,
+      qualification_reason: status === 'rejected' ? null : reviewReason ? reviewReasonLabel(reviewReason) : result.qualification.reason,
+      rejection_reason: status === 'rejected' ? siteRejectReasonLabel(decision.reason) : null,
+      matched_lead_id: matchedLeadId || (lookalike?.kind === 'lead' ? lookalike.id : null),
+      matched_company_id: lookalike?.kind === 'company' ? lookalike.id : null,
+      match_explanation: matchExplanation,
     })
     if (!promote) return
     if (dryRun) {
@@ -721,24 +794,34 @@ export async function verifyPendingCandidateSites(client, { settings, deadline, 
     if (error) throw error
   }
 
-  for (let i = 0; i < pending.length; i += SITE_VERIFY_CONCURRENCY) {
+  // One candidate's unexpected failure is recorded as a failed load, so it
+  // cannot stay at the head of the queue and block every run after it.
+  async function handleSafely(candidate) {
+    try {
+      await handle(candidate)
+    } catch {
+      summary.errors += 1
+      await failedLoad(candidate, 'error').catch(() => {})
+    }
+  }
+
+  let settled = 0
+  while (settled < pending.length) {
     if (Date.now() >= deadline) {
       summary.stoppedBy = 'time_budget'
       break
     }
     if (summary.stoppedBy === 'promotion_budget') break
-    if (summary.checked >= MAX_SITE_CHECKS_PER_RUN) {
+    if (summary.checked >= maxChecks) {
       summary.stoppedBy = 'site_check_budget'
       break
     }
-    await Promise.all(
-      pending.slice(i, i + SITE_VERIFY_CONCURRENCY).map((candidate) =>
-        handle(candidate).catch(() => {
-          summary.errors += 1
-        }),
-      ),
-    )
+    // Never more site loads in flight than the run has left.
+    const batch = pending.slice(settled, settled + Math.min(SITE_VERIFY_CONCURRENCY, maxChecks - summary.checked))
+    await Promise.all(batch.map(handleSafely))
+    settled += batch.length
   }
+  summary.remaining = pending.length - settled
   return summary
 }
 
@@ -846,14 +929,15 @@ export async function runDiscovery(
 
   // Scheduled runs repeat through the day (see the phase33 cron); once
   // today's target of new public emails is reached they stop spending
-  // searches until tomorrow.
+  // searches (new sources, leads' official-site search) until tomorrow, but
+  // still read waiting candidates' websites and registered leads' own
+  // websites, so the candidates already found keep being settled. The
+  // sender's own daily cap is separate and unchanged.
   const dailyEmailTarget = settings.daily_new_email_target ?? DEFAULT_DAILY_NEW_EMAIL_TARGET
   const emailsFoundBefore = serverPhases ? await countEmailsFoundToday(client) : null
-  if (runType === 'scheduled' && serverPhases && emailsFoundBefore >= dailyEmailTarget) {
-    return { skipped: true, reason: `هدف روزانه (${dailyEmailTarget} ایمیل جدید) امروز پر شده است.` }
-  }
+  const searchesPaused = runType === 'scheduled' && serverPhases && emailsFoundBefore >= dailyEmailTarget
 
-  const sources = await fetchRunnableSources(client, sourceId)
+  const sources = searchesPaused ? [] : await fetchRunnableSources(client, sourceId)
 
   let runRow
   try {
@@ -1030,7 +1114,7 @@ export async function runDiscovery(
           fetchPage,
         })
         totals.errorsCount += leadContacts.errors
-        const searches = Math.min(MAX_LEAD_SITE_SEARCHES_PER_RUN, externalRequestBudget.remaining)
+        const searches = searchesPaused ? 0 : Math.min(MAX_LEAD_SITE_SEARCHES_PER_RUN, externalRequestBudget.remaining)
         leadSiteSearch = await searchOfficialSitesForLeads(client, {
           deadline: runStartedAt + runTimeoutMs,
           maxSearches: searches,
@@ -1104,9 +1188,73 @@ export async function runDiscovery(
         leadSiteSearch,
         leadContacts,
         dailyEmailTarget,
+        searchesPaused,
         emailsFoundTodayBefore: emailsFoundBefore,
         emailsFoundTodayAfter: serverPhases && !effectiveDryRun ? await countEmailsFoundToday(client) : null,
       },
+    })
+    .eq('id', runRow.id)
+    .select('*')
+    .single()
+  if (finishError) throw finishError
+  return finishedRun
+}
+
+// Settles candidates already found, without searching for new ones: one
+// bounded site step (same per-run site limit, timeouts and retries as a
+// daily run). Resumable - each call continues with the oldest waiting
+// candidates. Logged as a scheduled run (summary.mode) so it never overlaps
+// the daily run: the same concurrency guard and one-running-scheduled-run
+// index apply.
+export async function processCandidateBacklog(client, { createdBy = null, fetchPage = null, maxChecks = MAX_SITE_CHECKS_PER_RUN } = {}) {
+  const settings = await fetchProspectSettings(client)
+  if (!settings.enabled) return { skipped: true, reason: 'موتور کشف مشتری غیرفعال است.' }
+  const guard = await guardConcurrentScheduledRun(client)
+  if (guard.skipped) return guard
+  const dryRun = Boolean(settings.dry_run)
+
+  let runRow
+  try {
+    const { data, error } = await client.from('prospect_discovery_runs').insert({ source_id: null, run_type: 'scheduled', status: 'running' }).select('*').single()
+    if (error) throw error
+    runRow = data
+  } catch (err) {
+    if (isUniqueViolationError(err)) return { skipped: true, reason: 'اجرای زمان‌بندی‌شده دیگری هم‌اکنون در حال اجراست.' }
+    throw err
+  }
+
+  const runTimeoutMs = settings.run_timeout_ms ?? DEFAULT_RUN_TIMEOUT_MS
+  let siteVerification
+  try {
+    siteVerification = await verifyPendingCandidateSites(client, {
+      settings,
+      deadline: Date.now() + runTimeoutMs * SITE_VERIFY_PHASE_END,
+      createdBy,
+      dryRun,
+      promotions: { remaining: settings.max_promotions_per_run },
+      maxChecks,
+      ...(fetchPage ? { fetchPage } : {}),
+    })
+  } catch (fatalError) {
+    await client
+      .from('prospect_discovery_runs')
+      .update({ status: 'failed', finished_at: new Date().toISOString(), errors_count: 1, summary: { mode: 'candidate_backlog', fatalError: fatalError instanceof Error ? fatalError.message : 'unknown_error', dryRun } })
+      .eq('id', runRow.id)
+    throw fatalError
+  }
+
+  const { data: finishedRun, error: finishError } = await client
+    .from('prospect_discovery_runs')
+    .update({
+      status: siteVerification.errors === 0 ? 'completed' : 'partial',
+      finished_at: new Date().toISOString(),
+      candidates_found: 0,
+      candidates_created: 0,
+      candidates_updated: siteVerification.checked,
+      candidates_promoted: siteVerification.promoted,
+      duplicates_detected: siteVerification.duplicates,
+      errors_count: siteVerification.errors,
+      summary: { mode: 'candidate_backlog', dryRun, runTimeoutMs, siteVerification, wouldPromoteCount: siteVerification.wouldPromote },
     })
     .eq('id', runRow.id)
     .select('*')
