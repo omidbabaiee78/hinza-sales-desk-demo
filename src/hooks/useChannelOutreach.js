@@ -20,6 +20,7 @@ export function useChannelOutreach() {
   const [notInstalled, setNotInstalled] = useState(false)
   const [running, setRunning] = useState(false)
   const [runReport, setRunReport] = useState(null)
+  const [testSendReport, setTestSendReport] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -71,5 +72,22 @@ export function useChannelOutreach() {
     }
   }
 
-  return { ...(data || {}), entries, counts, loading, error, notInstalled, running, runReport, refresh: load, runNow }
+  // ONE approved-template message to the server's WHATSAPP_TEST_RECIPIENT
+  // (never a lead; the queue is not touched) - see runWhatsAppTestSend().
+  async function testSend() {
+    setRunning(true)
+    setTestSendReport(null)
+    try {
+      const { data: report, error: invokeError } = await supabase.functions.invoke('outreach-channels', { body: { mode: 'whatsapp_test_send' } })
+      if (invokeError || !report?.ok) throw invokeError || new Error('test_send_failed')
+      setTestSendReport(report)
+    } catch {
+      setTestSendReport({ ok: false })
+    } finally {
+      await load()
+      setRunning(false)
+    }
+  }
+
+  return { ...(data || {}), entries, counts, loading, error, notInstalled, running, runReport, testSendReport, refresh: load, runNow, testSend }
 }

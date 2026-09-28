@@ -151,6 +151,7 @@ export async function runAutoEmailCycle(
     queued: 0,
     sent: 0,
     duplicatesSkipped: 0,
+    gapDeferred: 0,
     failed: 0,
     uncertain: 0,
     blocked: 0,
@@ -265,6 +266,13 @@ export async function runAutoEmailCycle(
           report.capReached = true
           report.notSending = `سقف روزانه (${report.dailyCap} ایمیل در روز) پر شد؛ بقیه صف از فردا ارسال می‌شود.`
           break
+        }
+        if (claim === 'gap') {
+          // The lead's WhatsApp intro went out less than 24h ago - it stays
+          // queued and is emailed by a later run.
+          report.gapDeferred += 1
+          report.details.push({ company: companyOf(lead), outcome: 'deferred', reason: 'کمتر از ۲۴ ساعت از پیام واتساپ این سرنخ گذشته است.' })
+          continue
         }
         if (claim !== 'claimed') {
           report.duplicatesSkipped += 1

@@ -90,6 +90,14 @@ export async function sendWhatsApp({ accessToken, phoneNumberId, recipient, mess
   }
 }
 
+// The three-state outcome of a non-2xx Graph API response: a 4xx is a
+// definite rejection (bad number, template, token...) - EXCEPT 408/409/429,
+// where Meta may still process the request - and a 5xx is unknown.
+export function whatsappErrorOutcome(httpStatus) {
+  if (httpStatus >= 400 && httpStatus < 500 && ![408, 409, 429].includes(httpStatus)) return 'rejected'
+  return 'unknown'
+}
+
 // First (business-initiated) contact. WhatsApp Cloud API delivers free-form
 // text only inside a 24-hour window opened by the customer's own message;
 // a cold introduction must use a message TEMPLATE approved in Meta's
@@ -97,7 +105,7 @@ export async function sendWhatsApp({ accessToken, phoneNumberId, recipient, mess
 // template; `bodyParameters` fill its {{1}}, {{2}}... placeholders in order
 // (must match the template, e.g. [companyName] or []).
 export async function sendWhatsAppTemplate({ accessToken, phoneNumberId, recipient, templateName, languageCode = 'fa', bodyParameters = [], timeoutMs = DEFAULT_TIMEOUT_MS }) {
-  const fail = (errorCode, errorMessage) => ({ ok: false, provider: PROVIDER_NAME, providerMessageId: null, status: 'failed', errorCode, errorMessage })
+  const fail = (errorCode, errorMessage, outcome = 'rejected') => ({ ok: false, outcome, provider: PROVIDER_NAME, providerMessageId: null, status: 'failed', errorCode, errorMessage })
   if (!accessToken || !phoneNumberId) return fail('credentials_missing', 'WhatsApp access token / phone number id is not configured.')
   if (!templateName) return fail('template_missing', 'No approved WhatsApp message template is configured.')
   if (!recipient) return fail('recipient_missing', 'No recipient number provided.')
@@ -115,14 +123,44 @@ export async function sendWhatsAppTemplate({ accessToken, phoneNumberId, recipie
       signal: controller.signal,
     })
     const body = await response.json().catch(() => null)
-    if (!response.ok) return fail(body?.error?.code != null ? String(body.error.code) : String(response.status), body?.error?.message || `HTTP ${response.status}`)
-    // "accepted" by Meta; delivered/read/failed arrive later as webhook
-    // status events - not connected yet, so this is never "delivered".
-    return { ok: true, provider: PROVIDER_NAME, providerMessageId: body?.messages?.[0]?.id || null, status: 'sent', errorCode: null, errorMessage: null }
+    if (!response.ok) {
+      return fail(
+        body?.error?.code != null ? String(body.error.code) : String(response.status),
+        body?.error?.message || `HTTP ${response.status}`,
+        whatsappErrorOutcome(response.status),
+      )
+    }
+    const providerMessageId = body?.messages?.[0]?.id || null
+    // Accepted by Meta - NOT delivered. sent/delivered/read/failed arrive
+    // later on the whatsapp-webhook status callback. A 2xx without a message
+    // id cannot be matched to those callbacks, so its outcome is unknown.
+    if (!providerMessageId) return { ok: false, outcome: 'unknown', provider: PROVIDER_NAME, providerMessageId: null, status: 'uncertain', errorCode: 'missing_message_id', errorMessage: 'Meta accepted the request but returned no message id.' }
+    return { ok: true, outcome: 'accepted', provider: PROVIDER_NAME, providerMessageId, status: 'sent', errorCode: null, errorMessage: null }
   } catch (err) {
     const isTimeout = err?.name === 'AbortError'
-    return fail(isTimeout ? 'timeout' : 'network_error', isTimeout ? `Request timed out after ${timeoutMs}ms` : err?.message || 'Unknown network error')
+    return fail(isTimeout ? 'timeout' : 'network_error', isTimeout ? `Request timed out after ${timeoutMs}ms` : err?.message || 'Unknown network error', 'unknown')
   } finally {
     clearTimeout(timeoutHandle)
   }
+}
+
+// The approved intro template's {{1}}... values. paramSpec comes from the
+// WHATSAPP_INTRO_TEMPLATE_PARAMS secret: 'company_name' fills {{1}} with
+// the company name, '' sends a template without placeholders.
+export function introTemplateParameters(paramSpec, lead) {
+  return paramSpec === 'company_name' ? [lead?.company_name || 'شرکت شما'] : []
+}
+
+// What is stored as the message snapshot for a template send - the template
+// and its values, since Meta renders the actual text.
+export function describeTemplateSend({ templateName, languageCode = 'fa', bodyParameters = [] }) {
+  return `[قالب واتساپ: ${templateName} (${languageCode})${bodyParameters.length ? ` - مقادیر: ${bodyParameters.join('، ')}` : ''}]`
+}
+
+// Registry entry (providers/index.js): the approved template when one is
+// configured (required for a real first contact), otherwise free text
+// (only reaches a number that messaged the business in the last 24h, e.g.
+// the admin's own test number).
+export function sendWhatsAppMessage(params) {
+  return params.templateName ? sendWhatsAppTemplate(params) : sendWhatsApp(params)
 }

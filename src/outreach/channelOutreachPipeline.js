@@ -14,20 +14,26 @@
 //   2. RECONCILE - waiting_provider <-> queued as providers are configured
 //      or switched off; queued/waiting rows of leads that opted out ->
 //      opted_out.
-//   3. SEND - only when outreach_enabled, not provider_test_mode, inside
-//      the contact window, and the channel's provider is ready. Each row is
-//      claimed with claim_channel_outreach_message() (queued -> sending
-//      under a lock, with the per-channel daily cap) so a row is sent by
-//      exactly one run. An exception during the provider call leaves the
-//      row 'uncertain' - never retried automatically.
+//   3. SEND - only when outreach_enabled, the channel is not in test mode
+//      (WhatsApp: whatsapp_test_mode; Bale: provider_test_mode), inside the
+//      contact window, and the channel's provider is ready. The lead is
+//      re-checked, then each row is claimed with the SAME claim the manual
+//      send uses (channelClaims.js -> claim_channel_send: one intro per
+//      number and lead, opt-outs, the 24h gap after the first email, the
+//      daily cap - WhatsApp never above 20) so a row is sent by exactly one
+//      run or admin. An exception or unknown outcome leaves the row
+//      'uncertain' - never retried automatically.
 // Every change is appended to channel_outreach_events (the attempt
-// history). Nothing here touches the email tables or outreach_attempts.
+// history). A sent intro is logged on the lead's timeline but never stamps
+// last_contact_at, so the email intro still reaches the lead (and vice
+// versa). Nothing here writes the email tables or outreach_attempts.
 // ---------------------------------------------------------------------------
 
 import { evaluateContactWindow } from './contactWindow.js'
 import { productHintsFor } from './autoEmail.js'
 import {
   CHANNELS,
+  CHANNEL_LABELS,
   channelProviderReadiness,
   composeChannelIntro,
   leadIntroBlock,
@@ -35,8 +41,11 @@ import {
   replySets,
   resolveChannelLimits,
 } from './channelOutreach.js'
-import { detectContactPoints } from './contactPoints.js'
+import { detectContactPoints, normalizeMobile } from './contactPoints.js'
 import { safirPhoneNumber } from './providers/baleProvider.js'
+import { describeTemplateSend, introTemplateParameters } from './providers/whatsappProvider.js'
+import { channelTestMode, maskRecipient } from './sendGate.js'
+import { channelOutcome, claimChannelSend, recordChannelSendResult } from './channelClaims.js'
 
 async function fetchAll(client, table, columns = '*') {
   const { data, error } = await client.from(table).select(columns)
@@ -72,7 +81,7 @@ async function sendThroughProvider(providers, row, lead, text) {
 }
 
 export async function runChannelOutreachCycle(client, { trigger = 'cron', credentials = {}, providers = {}, now = new Date() } = {}) {
-  const report = { status: 'completed', reason: null, leadsScanned: 0, registered: 0, requeued: 0, parked: 0, optedOut: 0, sent: 0, failed: 0, uncertain: 0, notSending: null, readiness: {}, details: [] }
+  const report = { status: 'completed', reason: null, leadsScanned: 0, registered: 0, requeued: 0, parked: 0, optedOut: 0, sent: 0, failed: 0, uncertain: 0, deferred: 0, notSending: null, testModeChannels: [], readiness: {}, details: [] }
 
   const { data: runRow, error: runError } = await client.from('channel_outreach_runs').insert({ trigger, status: 'running' }).select('*').single()
   if (runError) throw runError
@@ -85,15 +94,16 @@ export async function runChannelOutreachCycle(client, { trigger = 'cron', creden
   try {
     const { data: settings, error: settingsError } = await client.from('automation_settings').select('*').eq('id', 1).single()
     if (settingsError) throw settingsError
-    const [leads, messages, replies, recipients, candidates] = await Promise.all([
+    const [leads, messages, replies, recipients, candidates, attempts] = await Promise.all([
       fetchAll(client, 'sales_leads'),
       fetchAll(client, 'channel_outreach_messages'),
       fetchAll(client, 'inbound_replies', 'lead_id, predicted_intent, final_intent'),
       fetchAll(client, 'email_outreach_recipients', 'lead_id, status'),
       fetchAll(client, 'prospect_candidates'),
+      fetchAll(client, 'outreach_attempts', 'lead_id, channel, purpose, status, test_mode'),
     ])
     report.leadsScanned = leads.length
-    const sets = replySets(replies, recipients)
+    const sets = replySets(replies, recipients, attempts)
     const leadById = new Map(leads.map((l) => [l.id, l]))
     const candidateByLead = new Map(candidates.filter((c) => c.promoted_lead_id).map((c) => [c.promoted_lead_id, c]))
     const byKey = new Map(messages.map((m) => [messageKey(m.channel, m.normalized_destination), m]))
@@ -168,50 +178,75 @@ export async function runChannelOutreachCycle(client, { trigger = 'cron', creden
     }
 
     // 3. Send.
+    report.testModeChannels = CHANNELS.filter((c) => channelTestMode(settings, c))
     const queued = [...byKey.values()].filter((r) => r.status === 'queued').sort((a, b) => String(a.queued_at || a.created_at).localeCompare(String(b.queued_at || b.created_at)))
+    const sendable = queued.filter((r) => !report.testModeChannels.includes(r.channel))
     if (queued.length === 0) report.notSending = 'پیامی در صف واتساپ/بله نیست.'
     else if (!settings.outreach_enabled) report.notSending = 'ارسال واقعی در تنظیمات غیرفعال است.'
-    else if (settings.provider_test_mode) report.notSending = 'حالت آزمایشی سرویس‌ها روشن است؛ ارسال خودکار انجام نمی‌شود.'
+    else if (sendable.length === 0) report.notSending = `حالت آزمایشی ${report.testModeChannels.map((c) => CHANNEL_LABELS[c]).join('، ')} روشن است؛ ارسال خودکار انجام نمی‌شود.`
     else if (!evaluateContactWindow(settings, now).withinWindow) report.notSending = 'خارج از بازه زمانی مجاز تماس.'
     if (report.notSending) return await finish('completed')
 
     const { maxPerRun } = resolveChannelLimits(settings)
     const sentPerChannel = Object.fromEntries(CHANNELS.map((c) => [c, 0]))
     const capped = new Set()
-    for (const row of queued) {
+    for (const row of sendable) {
       if (capped.has(row.channel) || sentPerChannel[row.channel] >= maxPerRun) continue
       const lead = leadById.get(row.lead_id)
       if (!lead || !readinessFor(row.channel, row.destination_kind).ready) continue
-      const { data: claim, error: claimError } = await client.rpc('claim_channel_outreach_message', { p_id: row.id })
-      if (claimError) throw claimError
-      if (claim === 'cap_reached') {
+      if (leadIntroBlock(lead, sets)) continue
+      const claim = await claimChannelSend(client, {
+        channel: row.channel,
+        destination: row.normalized_destination,
+        destinationKind: row.destination_kind,
+        leadId: lead.id,
+        source: trigger === 'admin' ? 'auto_admin' : 'auto',
+      })
+      if (claim.result === 'cap_reached') {
         capped.add(row.channel)
         continue
       }
-      if (claim !== 'claimed') continue
+      if (claim.result === 'gap') {
+        report.deferred += 1
+        report.details.push({ company: lead.company_name || '—', channel: row.channel, outcome: 'deferred', until: claim.until })
+        continue
+      }
+      if (claim.result === 'opted_out') {
+        const updated = await transition(client, row, ['queued', 'waiting_provider'], { status: 'opted_out' })
+        if (updated) {
+          report.optedOut += 1
+          await logEvent(client, updated, 'opted_out')
+        }
+        continue
+      }
+      if (claim.result !== 'claimed') continue
       sentPerChannel[row.channel] += 1
 
       const { industryLabels, products } = productHintsFor({ candidate: candidateByLead.get(lead.id) || null })
       const text = composeChannelIntro({ lead, industryLabels, products })
+      const wa = credentials.whatsapp || {}
+      const snapshot =
+        row.channel === 'whatsapp'
+          ? describeTemplateSend({ templateName: wa.templateName, languageCode: wa.languageCode, bodyParameters: introTemplateParameters(wa.params, lead) })
+          : text
       let result
       try {
         result = await sendThroughProvider(providers, row, lead, text)
       } catch (err) {
         result = { ok: false, uncertain: true, errorCode: 'send_exception', errorMessage: err instanceof Error ? err.message : 'unknown_error' }
       }
-      const status = result?.ok ? 'sent' : result?.uncertain || result?.errorCode === 'timeout' ? 'uncertain' : 'failed'
-      const updated = await transition(client, row, ['sending'], {
-        status,
-        provider: result?.provider || null,
-        provider_message_id: result?.providerMessageId || null,
-        error_code: result?.errorCode || null,
-        error_message: result?.errorMessage || null,
-        message_snapshot: text,
-        sent_at: status === 'sent' ? new Date().toISOString() : null,
-      })
-      if (updated) Object.assign(row, updated)
+      const { status } = await recordChannelSendResult(client, { messageId: row.id, leadId: lead.id, channel: row.channel, result, snapshot })
+      row.status = status
       report[status] += 1
-      await logEvent(client, row, status, { provider: result?.provider || null, providerMessageId: result?.providerMessageId || null, errorCode: result?.errorCode || null })
+      if (status === 'sent' && row.channel === 'whatsapp') {
+        const { error: activityError } = await client.from('lead_activities').insert({
+          lead_id: lead.id,
+          activity_type: 'whatsapp',
+          note: `پیام معرفی ${CHANNEL_LABELS[row.channel]} (${result?.provider || '—'}) - سرویس پذیرفت؛ تحویل تأیید نشده. شناسه: ${result?.providerMessageId || '—'}`,
+          created_by: null,
+        })
+        if (activityError) throw activityError
+      }
       report.details.push({ company: lead.company_name || '—', channel: row.channel, outcome: status, errorCode: result?.errorCode || null })
     }
     if (capped.size > 0) report.notSending = `سقف روزانه برای ${[...capped].join('، ')} پر شد.`
@@ -222,3 +257,40 @@ export async function runChannelOutreachCycle(client, { trigger = 'cron', creden
     throw err
   }
 }
+
+// One controlled WhatsApp message to the admin's own test number
+// (WHATSAPP_TEST_RECIPIENT) - the approved intro template, filled with a
+// sample company name. Never touches the queue, a lead, the daily cap or
+// any setting (it does not need whatsapp_provider_enabled, so the waiting
+// rows stay parked); recorded as an admin run. Accepted is reported as
+// accepted - delivery only ever comes from the webhook.
+export async function runWhatsAppTestSend(client, { credentials = {}, providers = {}, testRecipient = null } = {}) {
+  const recipient = normalizeMobile(testRecipient)
+  const wa = credentials.whatsapp || {}
+  const missing = []
+  if (!wa.accessToken || !wa.phoneNumberId) missing.push('credentials_missing')
+  if (!wa.templateName) missing.push('template_missing')
+  if (!recipient) missing.push('test_recipient_missing')
+  const report = { mode: 'whatsapp_test_send', recipientMasked: maskRecipient(recipient, 'whatsapp'), missing, outcome: null, providerMessageId: null, errorCode: null, errorMessage: null }
+  const { data: runRow, error: runError } = await client.from('channel_outreach_runs').insert({ trigger: 'admin', status: 'running' }).select('*').single()
+  if (runError) throw runError
+  if (missing.length === 0) {
+    const lead = { company_name: 'شرکت نمونه (آزمایشی)' }
+    let result
+    try {
+      result = await providers.whatsapp({ recipient, lead, text: '' })
+    } catch (err) {
+      result = { ok: false, uncertain: true, errorCode: 'send_exception', errorMessage: err instanceof Error ? err.message : 'unknown_error' }
+    }
+    report.outcome = OUTCOME_LABEL[channelOutcome(result)]
+    report.providerMessageId = result?.providerMessageId || null
+    report.errorCode = result?.errorCode || null
+    report.errorMessage = result?.errorMessage || null
+    report.snapshot = describeTemplateSend({ templateName: wa.templateName, languageCode: wa.languageCode, bodyParameters: introTemplateParameters(wa.params, lead) })
+  }
+  const status = missing.length === 0 && report.outcome !== 'failed' ? 'completed' : 'failed'
+  await client.from('channel_outreach_runs').update({ status, finished_at: new Date().toISOString(), sent: report.outcome === 'accepted' ? 1 : 0, failed: report.outcome === 'failed' ? 1 : 0, report }).eq('id', runRow.id)
+  return { runId: runRow.id, ...report }
+}
+
+const OUTCOME_LABEL = { accepted: 'accepted', rejected: 'failed', unknown: 'uncertain' }

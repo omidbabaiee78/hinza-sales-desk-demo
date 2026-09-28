@@ -6,8 +6,12 @@
 import assert from 'node:assert/strict'
 import { detectContactPoints, leadOrigin, normalizeMobile } from '../src/outreach/contactPoints.js'
 import { buildChannelOutreachState, channelProviderReadiness, summarizeChannelOutreach } from '../src/outreach/channelOutreach.js'
-import { runChannelOutreachCycle } from '../src/outreach/channelOutreachPipeline.js'
+import { runChannelOutreachCycle, runWhatsAppTestSend } from '../src/outreach/channelOutreachPipeline.js'
 import { buildEmailOutreachState } from '../src/outreach/autoEmail.js'
+import { claimChannelSend, channelOutcome } from '../src/outreach/channelClaims.js'
+import { attemptSend } from '../src/outreach/sendPipeline.js'
+import { channelTestMode } from '../src/outreach/sendGate.js'
+import { handleWhatsAppWebhook, isOptOutMessage, signMetaPayload, verifyMetaSignature, verifySubscription } from '../src/outreach/whatsappWebhook.js'
 import { sendBaleSafir, sendBaleBot } from '../src/outreach/providers/baleProvider.js'
 import { sendWhatsAppTemplate } from '../src/outreach/providers/whatsappProvider.js'
 
@@ -69,7 +73,7 @@ const BALE_SAFIR_READY = { bale: { safirApiKey: 'k', safirBotId: '123' } }
 // ignoreDuplicates), conditional update with .in(), and the
 // claim_channel_outreach_message RPC (same rules as the SQL). Every await
 // yields, so concurrent runs genuinely interleave.
-function makeClient({ config = settings(), leads = [], messages = [], replies = [], recipients = [], candidates = [] } = {}) {
+function makeClient({ config = settings(), leads = [], messages = [], replies = [], recipients = [], candidates = [], attempts = [], suggestions = [] } = {}) {
   const tables = {
     automation_settings: [config],
     sales_leads: leads,
@@ -79,16 +83,25 @@ function makeClient({ config = settings(), leads = [], messages = [], replies = 
     inbound_replies: replies,
     email_outreach_recipients: recipients,
     prospect_candidates: candidates,
-    outreach_attempts: [],
+    outreach_attempts: attempts,
+    outreach_send_claims: [],
+    prospect_outreach_suggestions: suggestions,
+    lead_activities: [],
+    whatsapp_provider_events: [],
   }
   let nextId = 1
   const tick = () => new Promise((resolve) => setImmediate(resolve))
   const clone = (x) => structuredClone(x)
   const matches = (row, filters) => filters.every(([f, v, op]) => (op === 'in' ? v.includes(row[f]) : row[f] === v))
 
-  function select(table) {
+  function select(table, columns = '*') {
     const filters = []
-    const rows = () => tables[table].filter((r) => matches(r, filters)).map(clone)
+    const joinLead = String(columns).includes('sales_leads(')
+    const rows = () =>
+      tables[table]
+        .filter((r) => matches(r, filters))
+        .map(clone)
+        .map((r) => (joinLead ? { ...r, sales_leads: clone(tables.sales_leads.find((l) => l.id === r.lead_id) || null) } : r))
     const chain = {
       eq: (f, v) => (filters.push([f, v]), chain),
       in: (f, v) => (filters.push([f, v, 'in']), chain),
@@ -97,6 +110,7 @@ function makeClient({ config = settings(), leads = [], messages = [], replies = 
         const r = rows()
         return r[0] ? { data: r[0], error: null } : { data: null, error: { message: 'not found' } }
       },
+      maybeSingle: async () => (await tick(), { data: rows()[0] || null, error: null }),
       then: (res, rej) => tick().then(() => ({ data: rows(), error: null })).then(res, rej),
     }
     return chain
@@ -115,7 +129,7 @@ function makeClient({ config = settings(), leads = [], messages = [], replies = 
     const run = async () => {
       await tick()
       const inserted = []
-      for (const r of payload) {
+      for (const r of Array.isArray(payload) ? payload : [payload]) {
         const existing = tables[table].find((x) => keys.every((k) => x[k] === r[k]))
         if (existing) {
           if (!ignoreDuplicates) Object.assign(existing, r)
@@ -140,42 +154,88 @@ function makeClient({ config = settings(), leads = [], messages = [], replies = 
     const chain = {
       eq: (f, v) => (filters.push([f, v]), chain),
       in: (f, v) => (filters.push([f, v, 'in']), chain),
-      select: () => ({ then: (res, rej) => run().then(res, rej) }),
+      select: () => ({
+        single: () => run().then(({ data }) => (data[0] ? { data: data[0], error: null } : { data: null, error: { message: 'not found' } })),
+        then: (res, rej) => run().then(res, rej),
+      }),
       then: (res, rej) => run().then(res, rej),
     }
     return chain
   }
+  // claim_channel_send / claim_email_outreach_recipient, same rules and
+  // order as phase37_whatsapp_outreach.sql, serialized by one lock.
+  // clock() is the database's now() (tests move it to cross the 24h gap).
   let claimLock = Promise.resolve()
+  const CLAIMED = ['sending', 'sent', 'delivered', 'uncertain']
+  const HOUR = 3600 * 1000
+  const tehranDay = (iso) => new Date(new Date(iso).getTime() + 3.5 * HOUR).toISOString().slice(0, 10)
+  function claimChannel(a) {
+    const s = tables.automation_settings[0]
+    const nowMs = client.clock().getTime()
+    const out = (result, row, extra = {}) => ({ result, id: row?.id || null, ...extra })
+    const row = tables.channel_outreach_messages.find((m) => m.channel === a.p_channel && m.normalized_destination === a.p_destination)
+    if (row && row.lead_id && row.lead_id !== a.p_lead_id) return out('duplicate', row)
+    if (row && row.status === 'opted_out') return out('opted_out', row)
+    if (row && !['queued', 'waiting_provider'].includes(row.status) && !(row.status === 'failed' && a.p_source === 'manual')) return out('duplicate', row)
+    if (tables.channel_outreach_messages.some((m) => m.channel === a.p_channel && m.lead_id === a.p_lead_id && m.normalized_destination !== a.p_destination && CLAIMED.includes(m.status))) return out('duplicate', row)
+    const lead = tables.sales_leads.find((l) => l.id === a.p_lead_id)
+    if (!lead) return out('no_lead', row)
+    if (lead.do_not_contact || tables.inbound_replies.some((r) => r.lead_id === lead.id && (r.final_intent === 'do_not_contact' || r.predicted_intent === 'do_not_contact'))) return out('opted_out', row)
+    if (['converted', 'lost'].includes(lead.status)) return out('closed', row)
+    const gap = Math.max(s.channel_first_touch_gap_hours ?? 24, 24)
+    const cap = a.p_channel === 'whatsapp' ? Math.min(s.channel_daily_cap ?? 20, 20) : (s.channel_daily_cap ?? 20)
+    const emailTimes = [
+      ...tables.email_outreach_recipients.filter((r) => r.lead_id === lead.id && ['claimed', 'sent', 'uncertain'].includes(r.status)).map((r) => r.claimed_at),
+      ...tables.outreach_attempts.filter((t) => t.lead_id === lead.id && t.channel === 'email' && t.purpose === 'provider_send' && ['prepared', 'sent'].includes(t.status) && !t.test_mode).map((t) => t.created_at),
+    ].filter(Boolean).map((t) => new Date(t).getTime())
+    if (emailTimes.length && Math.min(...emailTimes) > nowMs - gap * HOUR) return out('gap', row, { until: new Date(Math.min(...emailTimes) + gap * HOUR).toISOString() })
+    const today = tables.channel_outreach_messages.filter((m) => m.channel === a.p_channel && CLAIMED.includes(m.status) && m.claimed_at && tehranDay(m.claimed_at) === tehranDay(client.clock().toISOString())).length
+    if (today >= cap) return out('cap_reached', row)
+    const nowIso = client.clock().toISOString()
+    let target = row
+    if (!target) {
+      target = stamp('channel_outreach_messages', { channel: a.p_channel, normalized_destination: a.p_destination, destination_kind: a.p_destination_kind, lead_id: a.p_lead_id, contact_source: 'manual_send', status: 'sending', queued_at: nowIso, claimed_at: nowIso, claim_source: a.p_source, suggestion_id: a.p_suggestion_id })
+      tables.channel_outreach_messages.push(target)
+    } else Object.assign(target, { status: 'sending', claimed_at: nowIso, claim_source: a.p_source, suggestion_id: a.p_suggestion_id ?? target.suggestion_id })
+    tables.channel_outreach_events.push(stamp('channel_outreach_events', { message_id: target.id, lead_id: a.p_lead_id, channel: a.p_channel, event: 'claimed', detail: { source: a.p_source } }))
+    return out('claimed', target)
+  }
+  function claimEmail(a) {
+    const s = tables.automation_settings[0]
+    const email = a.p_email.trim().toLowerCase()
+    if (tables.email_outreach_recipients.some((r) => r.normalized_email === email)) return 'duplicate'
+    const gap = Math.max(s.channel_first_touch_gap_hours ?? 24, 24)
+    const since = client.clock().getTime() - gap * HOUR
+    if (a.p_lead_id && tables.channel_outreach_messages.some((m) => m.lead_id === a.p_lead_id && m.channel === 'whatsapp' && CLAIMED.includes(m.status) && new Date(m.claimed_at).getTime() > since)) return 'gap'
+    tables.email_outreach_recipients.push(stamp('email_outreach_recipients', { normalized_email: email, lead_id: a.p_lead_id, suggestion_id: a.p_suggestion_id, status: 'claimed', claimed_at: client.clock().toISOString() }))
+    return 'claimed'
+  }
   async function rpc(name, args) {
-    assert.equal(name, 'claim_channel_outreach_message')
     const release = claimLock
     let done
     claimLock = new Promise((r) => (done = r))
     await release
     try {
       await tick()
-      const row = tables.channel_outreach_messages.find((m) => m.id === args.p_id && m.status === 'queued')
-      if (!row) return { data: 'not_queued', error: null }
-      const cap = tables.automation_settings[0].channel_daily_cap ?? 20
-      const today = tables.channel_outreach_messages.filter((m) => m.channel === row.channel && ['sending', 'sent', 'delivered', 'uncertain'].includes(m.status) && m.claimed_at).length
-      if (today >= cap) return { data: 'cap_reached', error: null }
-      row.status = 'sending'
-      row.claimed_at = new Date().toISOString()
-      return { data: 'claimed', error: null }
+      if (name === 'claim_channel_send') return { data: claimChannel(args), error: null }
+      if (name === 'claim_email_outreach_recipient') return { data: claimEmail(args), error: null }
+      throw new Error(`unexpected rpc ${name}`)
     } finally {
       done()
     }
   }
-  return {
+  const client = {
     tables,
     rpc,
+    clock: () => new Date(),
     from: (table) => ({
-      select: () => select(table),
+      select: (columns) => select(table, columns),
       insert: (p) => insert(table, p),
       upsert: (p, o) => upsert(table, p, o),
       update: (p) => update(table, p),
     }),
   }
+  return client
 }
 
 function mockProviders({ whatsapp, baleSafir, baleBot } = {}) {
@@ -501,6 +561,247 @@ await check('provider: Bale Bot API posts chat_id + text; WhatsApp sends an appr
   )
   const noTemplate = await sendWhatsAppTemplate({ accessToken: 'a', phoneNumberId: 'p', recipient: '+989121112233' })
   assert.equal(noTemplate.errorCode, 'template_missing')
+})
+
+// --- Phase 37: WhatsApp rules ---------------------------------------------------
+
+const hoursAgo = (h, from = noon) => new Date(from.getTime() - h * 3600 * 1000).toISOString()
+const WA_LIVE = { whatsapp_provider_enabled: true, whatsapp_test_mode: false }
+const waRows = (client) => client.tables.channel_outreach_messages.filter((r) => r.channel === 'whatsapp')
+const queuedRow = (l, i, status = 'queued') => ({ id: `q-${l.id}-${i}`, channel: 'whatsapp', normalized_destination: normalizeMobile(l.mobile), destination_kind: 'mobile', lead_id: l.id, status, queued_at: hoursAgo(72) })
+
+await check('whatsapp: at most 20 real messages per day, even when channel_daily_cap is higher', async () => {
+  const leads = Array.from({ length: 30 }, (_, i) => manualLead({ mobile: `091211130${String(i).padStart(2, '0')}` }))
+  const client = makeClient({ config: settings({ ...WA_LIVE, channel_daily_cap: 50, channel_max_per_run: 50 }), leads })
+  client.clock = () => noon
+  const { calls, providers } = mockProviders()
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  const report = await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(calls.whatsapp.length, 20)
+  assert.equal(waRows(client).filter((r) => r.status === 'sent').length, 20)
+  assert.equal(waRows(client).filter((r) => r.status === 'queued').length, 10, 'the rest wait for tomorrow')
+  assert.match(report.notSending, /سقف روزانه/)
+})
+
+await check('whatsapp: existing queued rows are never bulk-sent - test mode holds all of them, live mode is bounded by per-run limit and the 20/day cap', async () => {
+  const leads = Array.from({ length: 40 }, (_, i) => manualLead({ mobile: `091211140${String(i).padStart(2, '0')}` }))
+  const messages = leads.map((l, i) => queuedRow(l, i, 'waiting_provider'))
+  const client = makeClient({ config: settings({ whatsapp_provider_enabled: true, whatsapp_test_mode: true }), leads, messages })
+  client.clock = () => noon
+  const { calls, providers } = mockProviders()
+  const held = await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(calls.whatsapp.length, 0, 'WhatsApp test mode: not one queued row is sent')
+  assert.match(held.notSending, /حالت آزمایشی/)
+  assert.deepEqual(held.testModeChannels, ['whatsapp'])
+  client.tables.automation_settings[0].whatsapp_test_mode = false
+  const first = await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(first.sent, 5, 'one run sends at most channel_max_per_run')
+  for (let i = 0; i < 10; i += 1) await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(calls.whatsapp.length, 20, 'never more than 20 in a day, however many runs')
+})
+
+await check('whatsapp: test mode is per channel - WhatsApp test mode does not stop email, and email test mode does not decide WhatsApp', async () => {
+  assert.equal(channelTestMode(settings({ whatsapp_test_mode: true, provider_test_mode: false }), 'email'), false, 'email stays live')
+  assert.equal(channelTestMode(settings({ whatsapp_test_mode: true, provider_test_mode: false }), 'whatsapp'), true)
+  assert.equal(channelTestMode(settings({ whatsapp_test_mode: false, provider_test_mode: true }), 'whatsapp'), false)
+  assert.equal(channelTestMode(settings({ provider_test_mode: true }), 'whatsapp'), true, 'before the migration WhatsApp follows the shared flag')
+  assert.equal(channelTestMode({}, 'whatsapp'), true, 'unknown -> test mode')
+  // Bale (no own flag) still sends while WhatsApp is held in test mode.
+  const client = makeClient({ config: settings({ whatsapp_provider_enabled: true, whatsapp_test_mode: true, bale_provider_enabled: true }), leads: [manualLead({ mobile: '09121115001', bale_chat_id: '99' })] })
+  const { calls, providers } = mockProviders()
+  await runChannelOutreachCycle(client, { providers, credentials: { ...WHATSAPP_READY, bale: { botToken: 'bt' } }, now: noon })
+  assert.equal(calls.whatsapp.length, 0)
+  assert.equal(calls.baleBot.length, 1)
+})
+
+await check('whatsapp: a lead emailed more than 24h ago still gets its WhatsApp introduction', async () => {
+  const l = manualLead({ mobile: '09121116001', email: 'a@lead.ir', last_contact_at: hoursAgo(30) })
+  const client = makeClient({
+    config: settings(WA_LIVE),
+    leads: [l],
+    recipients: [{ lead_id: l.id, normalized_email: 'a@lead.ir', status: 'sent', claimed_at: hoursAgo(30) }],
+    attempts: [{ lead_id: l.id, channel: 'email', purpose: 'provider_send', status: 'sent', test_mode: false, created_at: hoursAgo(30) }],
+  })
+  client.clock = () => noon
+  const { calls, providers } = mockProviders()
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.deepEqual(calls.whatsapp.map((c) => c.recipient), ['+989121116001'])
+  assert.equal(client.tables.lead_activities.filter((a) => a.activity_type === 'whatsapp').length, 1, 'logged on the lead timeline')
+  assert.equal(client.tables.sales_leads[0].last_contact_at, hoursAgo(30), 'a WhatsApp intro does not stamp last_contact_at')
+})
+
+await check('whatsapp: minimum 24h after the first email - an already-queued row waits, then goes out once the gap has passed', async () => {
+  const l = manualLead({ mobile: '09121117001', email: 'b@lead.ir' })
+  const client = makeClient({
+    config: settings(WA_LIVE),
+    leads: [l],
+    messages: [queuedRow(l, 0)],
+    recipients: [{ lead_id: l.id, normalized_email: 'b@lead.ir', status: 'sent', claimed_at: hoursAgo(2) }],
+  })
+  client.clock = () => noon
+  const { calls, providers } = mockProviders()
+  const report = await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(calls.whatsapp.length, 0)
+  assert.equal(report.deferred, 1)
+  assert.equal(waRows(client)[0].status, 'queued', 'the queued row is kept, not dropped')
+  const tomorrow = new Date(noon.getTime() + 23 * 3600 * 1000)
+  client.clock = () => tomorrow
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: tomorrow })
+  assert.equal(calls.whatsapp.length, 1, '25h after the first email')
+  // The other direction: a fresh WhatsApp intro holds the lead's first email.
+  const m = manualLead({ mobile: '09121117002', email: 'c@lead.ir' })
+  client.tables.sales_leads.push(m)
+  client.tables.channel_outreach_messages.push({ ...queuedRow(m, 1), status: 'sent', claimed_at: tomorrow.toISOString() })
+  const { data } = await client.rpc('claim_email_outreach_recipient', { p_email: 'c@lead.ir', p_lead_id: m.id, p_suggestion_id: null })
+  assert.equal(data, 'gap')
+})
+
+await check('whatsapp: the manual and automatic paths share one claim - duplicates, concurrency, do_not_contact, closed leads', async () => {
+  const l = manualLead({ mobile: '09121118001' })
+  const dnc = manualLead({ mobile: '09121118002', do_not_contact: true })
+  const lost = manualLead({ mobile: '09121118003', status: 'lost' })
+  const client = makeClient({ config: settings(WA_LIVE), leads: [l, dnc, lost] })
+  const args = (lead, source) => ({ channel: 'whatsapp', destination: normalizeMobile(lead.mobile), destinationKind: 'mobile', leadId: lead.id, source })
+  const results = await Promise.all([1, 2, 3, 4, 5].map((i) => claimChannelSend(client, args(l, i % 2 ? 'manual' : 'auto'))))
+  assert.equal(results.filter((r) => r.result === 'claimed').length, 1, 'five concurrent claims, one winner')
+  assert.equal(waRows(client).filter((r) => r.lead_id === l.id).length, 1, 'the manual claim created the one row the runner also uses')
+  // The runner now sees the destination as taken and never calls the provider for it.
+  const { calls, providers } = mockProviders()
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.ok(!calls.whatsapp.some((c) => c.recipient === normalizeMobile(l.mobile)))
+  assert.equal((await claimChannelSend(client, args(l, 'manual'))).result, 'duplicate')
+  assert.equal((await claimChannelSend(client, { ...args(l, 'manual'), destination: '+989121118999' })).result, 'duplicate', 'one intro per lead, whatever its number')
+  assert.equal((await claimChannelSend(client, args(dnc, 'manual'))).result, 'opted_out')
+  assert.equal((await claimChannelSend(client, args(lost, 'manual'))).result, 'closed')
+  assert.equal(calls.whatsapp.length, 0)
+})
+
+await check('whatsapp: a failed provider request is recorded as failed (or uncertain), never retried, never delivered', async () => {
+  const [a, b] = [manualLead({ mobile: '09121119001' }), manualLead({ mobile: '09121119002' })]
+  const client = makeClient({ config: settings(WA_LIVE), leads: [a, b] })
+  client.clock = () => noon
+  const { calls, providers } = mockProviders({
+    whatsapp: async ({ recipient }) =>
+      recipient === '+989121119001'
+        ? { ok: false, provider: 'whatsapp_cloud_api', status: 'failed', outcome: 'rejected', errorCode: '132001', errorMessage: 'Template name does not exist' }
+        : { ok: false, provider: 'whatsapp_cloud_api', status: 'uncertain', outcome: 'unknown', errorCode: 'http_500' },
+  })
+  const report = await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  const rowA = waRows(client).find((r) => r.lead_id === a.id)
+  const rowB = waRows(client).find((r) => r.lead_id === b.id)
+  assert.equal(rowA.status, 'failed')
+  assert.equal(rowA.error_code, '132001')
+  assert.equal(rowA.provider_status, 'rejected')
+  assert.equal(rowB.status, 'uncertain')
+  assert.equal(report.failed + report.uncertain, 2)
+  assert.ok(client.tables.channel_outreach_events.some((e) => e.message_id === rowA.id && e.event === 'failed'))
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  assert.equal(calls.whatsapp.length, 2, 'neither is retried automatically')
+  assert.equal(channelOutcome({ ok: true, status: 'sent' }), 'accepted')
+  await withFetch(
+    () => json({ messages: [] }),
+    async () => {
+      const r = await sendWhatsAppTemplate({ accessToken: 'a', phoneNumberId: 'p', recipient: '+989121112233', templateName: 'hinza_intro' })
+      assert.equal(channelOutcome(r), 'unknown', '2xx without a message id is not "accepted"')
+    },
+  )
+  await withFetch(
+    () => json({ error: { message: 'bad param' } }, 400),
+    async () => assert.equal(channelOutcome(await sendWhatsAppTemplate({ accessToken: 'a', phoneNumberId: 'p', recipient: '+989121112233', templateName: 'x' })), 'rejected'),
+  )
+  await withFetch(
+    () => json({ error: { message: 'internal' } }, 500),
+    async () => assert.equal(channelOutcome(await sendWhatsAppTemplate({ accessToken: 'a', phoneNumberId: 'p', recipient: '+989121112233', templateName: 'x' })), 'unknown', 'a 5xx may have gone out - uncertain, never retried'),
+  )
+})
+
+// --- Phase 37: WhatsApp webhook ---------------------------------------------------
+
+const statusPayload = (id, status, extra = {}) => ({ entry: [{ changes: [{ field: 'messages', value: { statuses: [{ id, status, timestamp: '1790000000', recipient_id: '989121112233', ...extra }] } }] }] })
+const messagePayload = (id, from, body) => ({ entry: [{ changes: [{ field: 'messages', value: { messages: [{ id, from, timestamp: '1790000000', type: 'text', text: { body } }] } }] }] })
+
+await check('webhook: only a provider status makes a message delivered; statuses never move backwards; retries are no-ops', async () => {
+  const l = manualLead({ mobile: '09121112233' })
+  const client = makeClient({ config: settings(WA_LIVE), leads: [l] })
+  client.clock = () => noon
+  const { providers } = mockProviders({ whatsapp: async () => ({ ok: true, provider: 'whatsapp_cloud_api', providerMessageId: 'wamid.A', status: 'sent', outcome: 'accepted' }) })
+  await runChannelOutreachCycle(client, { providers, credentials: WHATSAPP_READY, now: noon })
+  const row = () => waRows(client)[0]
+  assert.equal(row().status, 'sent')
+  assert.equal(row().provider_status, 'accepted', 'API acceptance is only "accepted"')
+  assert.equal(row().delivered_at ?? null, null)
+  await handleWhatsAppWebhook(client, statusPayload('wamid.A', 'sent'))
+  assert.equal(row().provider_status, 'sent')
+  await handleWhatsAppWebhook(client, statusPayload('wamid.A', 'delivered'))
+  assert.equal(row().status, 'delivered')
+  assert.ok(row().delivered_at)
+  const retry = await handleWhatsAppWebhook(client, statusPayload('wamid.A', 'delivered'))
+  assert.equal(retry.duplicates, 1)
+  await handleWhatsAppWebhook(client, statusPayload('wamid.A', 'sent'))
+  assert.equal(row().status, 'delivered', 'a late "sent" does not undo delivery')
+  const ev = client.tables.whatsapp_provider_events
+  assert.equal(ev.length, 2, 'sent + delivered, each once')
+  assert.ok(ev.every((e) => !String(e.number_masked).includes('1112233')), 'numbers are stored masked')
+})
+
+await check('webhook: a failed status marks the message failed with the provider error', async () => {
+  const l = manualLead({ mobile: '09121112244' })
+  const client = makeClient({ config: settings(WA_LIVE), leads: [l], messages: [{ ...queuedRow(l, 0), status: 'sent', provider_status: 'accepted', provider_message_id: 'wamid.F' }] })
+  await handleWhatsAppWebhook(client, statusPayload('wamid.F', 'failed', { errors: [{ code: 131026, title: 'Message undeliverable' }] }))
+  const row = waRows(client)[0]
+  assert.equal(row.status, 'failed')
+  assert.equal(row.error_code, '131026')
+  assert.equal(row.provider_status, 'failed')
+})
+
+await check('webhook: «لغو» / توقف / STOP / unsubscribe set do_not_contact through the reply pipeline and withdraw queued intros', async () => {
+  for (const word of ['لغو', 'توقف', 'STOP', 'unsubscribe', 'لطفا دیگر پیام ندهید']) assert.equal(isOptOutMessage(word), true, word)
+  for (const word of ['سلام، قیمت را بفرستید', 'ممنون']) assert.equal(isOptOutMessage(word), false, word)
+  const l = manualLead({ mobile: '09121112255' })
+  const client = makeClient({ config: settings(WA_LIVE), leads: [l], messages: [queuedRow(l, 0)] })
+  const r = await handleWhatsAppWebhook(client, messagePayload('wamid.IN1', '989121112255', 'لغو'))
+  assert.equal(r.optOuts, 1)
+  assert.equal(client.tables.sales_leads[0].do_not_contact, true, 'the existing CRM opt-out flag')
+  assert.equal(client.tables.inbound_replies.length, 1)
+  assert.equal(client.tables.inbound_replies[0].final_intent, 'do_not_contact')
+  assert.equal(waRows(client)[0].status, 'opted_out')
+  assert.equal((await handleWhatsAppWebhook(client, messagePayload('wamid.IN1', '989121112255', 'لغو'))).duplicates, 1)
+  assert.equal(client.tables.inbound_replies.length, 1, 'a retried delivery is not stored twice')
+  const e = client.tables.whatsapp_provider_events.find((x) => x.kind === 'message')
+  assert.equal(e.applied, 'opted_out')
+  assert.equal(e.raw_payload, undefined, 'no raw payload or message text is kept in the event log')
+  // An ordinary reply goes to the inbox through the usual rules - not an opt-out.
+  const m = manualLead({ mobile: '09121112266' })
+  client.tables.sales_leads.push(m)
+  await handleWhatsAppWebhook(client, messagePayload('wamid.IN2', '989121112266', 'سلام، قیمت را بفرستید'))
+  assert.equal(client.tables.sales_leads[1].do_not_contact, false)
+  assert.notEqual(client.tables.inbound_replies[1].final_intent, 'do_not_contact')
+})
+
+await check('webhook: Meta signature and subscription handshake are verified', async () => {
+  const body = JSON.stringify(statusPayload('wamid.X', 'sent'))
+  const signature = await signMetaPayload({ appSecret: 's3cret', body })
+  assert.deepEqual(await verifyMetaSignature({ appSecret: 's3cret', body, signature }), { ok: true })
+  assert.equal((await verifyMetaSignature({ appSecret: 's3cret', body: body + ' ', signature })).ok, false)
+  assert.equal((await verifyMetaSignature({ appSecret: 'other', body, signature })).ok, false)
+  assert.equal((await verifyMetaSignature({ appSecret: 's3cret', body, signature: null })).ok, false)
+  assert.equal(verifySubscription({ mode: 'subscribe', token: 'vt', challenge: '42', verifyToken: 'vt' }), '42')
+  assert.equal(verifySubscription({ mode: 'subscribe', token: 'nope', challenge: '42', verifyToken: 'vt' }), null)
+  assert.equal(verifySubscription({ mode: 'subscribe', token: '', challenge: '42', verifyToken: '' }), null)
+})
+
+await check('test send: one template message to the configured test number only - no lead, no queue', async () => {
+  const l = manualLead({ mobile: '09121112277' })
+  const client = makeClient({ config: settings({ whatsapp_test_mode: true }), leads: [l], messages: [queuedRow(l, 0, 'waiting_provider')] })
+  const { calls, providers } = mockProviders()
+  const missing = await runWhatsAppTestSend(client, { credentials: WHATSAPP_READY, providers, testRecipient: null })
+  assert.deepEqual(missing.missing, ['test_recipient_missing'])
+  assert.equal(calls.whatsapp.length, 0)
+  const r = await runWhatsAppTestSend(client, { credentials: WHATSAPP_READY, providers, testRecipient: '09350000000' })
+  assert.equal(r.outcome, 'accepted')
+  assert.deepEqual(calls.whatsapp.map((c) => c.recipient), ['+989350000000'])
+  assert.equal(waRows(client)[0].status, 'waiting_provider', 'the queue is untouched')
+  assert.equal(client.tables.channel_outreach_runs.length, 2)
 })
 
 console.log(`\n${passed} check(s) passed.`)

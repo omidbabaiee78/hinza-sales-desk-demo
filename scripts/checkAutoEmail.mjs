@@ -64,7 +64,7 @@ function lead(overrides = {}) {
 // eq-chains, in, joins on sales_leads, upsert(onConflict, ignoreDuplicates),
 // update/delete with filters. Every await yields, so concurrent runs
 // genuinely interleave.
-function makeClient({ config = settings(), leads = [], suggestions = [], attempts = [], recipients = [], replies = [] } = {}) {
+function makeClient({ config = settings(), leads = [], suggestions = [], attempts = [], recipients = [], replies = [], channelMessages = [] } = {}) {
   const tables = {
     automation_settings: [config],
     sales_leads: leads,
@@ -164,6 +164,9 @@ function makeClient({ config = settings(), leads = [], suggestions = [], attempt
     if (name !== 'claim_email_outreach_recipient') return { data: null, error: { message: `unknown rpc ${name}` } }
     const email = args.p_email.trim().toLowerCase()
     if (tables.email_outreach_recipients.some((r) => r.normalized_email === email)) return { data: 'duplicate', error: null }
+    // phase37: a WhatsApp intro claimed for this lead in the last 24h holds its first email.
+    const since = noon.getTime() - 24 * 3600 * 1000
+    if (args.p_lead_id && channelMessages.some((m) => m.lead_id === args.p_lead_id && m.channel === 'whatsapp' && ['sending', 'sent', 'delivered', 'uncertain'].includes(m.status) && new Date(m.claimed_at).getTime() > since)) return { data: 'gap', error: null }
     const cap = tables.automation_settings[0].auto_email_daily_cap ?? 20
     const today = tehranDateKey(noon)
     const used = tables.email_outreach_recipients.filter((r) => ['claimed', 'sent', 'uncertain'].includes(r.status) && r.claimed_at && tehranDateKey(new Date(r.claimed_at)) === today).length
@@ -278,6 +281,29 @@ await check('outside the contact window: queued, not sent, with the reason repor
     assert.equal(report.queued, 1)
     assert.equal(sent.length, 0)
     assert.match(report.notSending, /بازه زمانی/)
+  })
+})
+
+await check('24h first-touch gap: a lead WhatsApp-messaged today keeps its email queued; one messaged yesterday is emailed', async () => {
+  const recent = lead()
+  const earlier = lead()
+  const wa = (l, hours) => ({ lead_id: l.id, channel: 'whatsapp', status: 'sent', claimed_at: new Date(noon.getTime() - hours * 3600 * 1000).toISOString() })
+  const client = makeClient({ leads: [recent, earlier], channelMessages: [wa(recent, 3), wa(earlier, 30)] })
+  await withResend({}, async (sent) => {
+    const report = await run(client)
+    assert.deepEqual(sent.map((b) => b.to[0]), [earlier.email])
+    assert.equal(report.gapDeferred, 1)
+    assert.equal(client.tables.email_outreach_recipients.length, 1, 'no recipient claim is taken for the deferred lead')
+    assert.ok(client.tables.prospect_outreach_suggestions.some((x) => x.lead_id === recent.id), 'its intro stays queued for a later run')
+  })
+})
+
+await check('WhatsApp test mode does not stop email: whatsapp_test_mode on, provider_test_mode off -> email still sends', async () => {
+  const client = makeClient({ config: settings({ provider_test_mode: false, whatsapp_test_mode: true }), leads: [lead()] })
+  await withResend({}, async (sent) => {
+    const report = await run(client)
+    assert.equal(report.sent, 1)
+    assert.equal(sent.length, 1)
   })
 })
 

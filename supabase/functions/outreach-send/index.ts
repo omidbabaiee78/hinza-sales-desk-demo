@@ -26,6 +26,11 @@ const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')
 const WHATSAPP_ACCESS_TOKEN = Deno.env.get('WHATSAPP_ACCESS_TOKEN')
 const WHATSAPP_PHONE_NUMBER_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
 const WHATSAPP_TEST_RECIPIENT = Deno.env.get('WHATSAPP_TEST_RECIPIENT')
+// The approved intro template (same secrets as outreach-channels) - a real
+// WhatsApp first contact is only ever sent as this template.
+const WHATSAPP_INTRO_TEMPLATE = Deno.env.get('WHATSAPP_INTRO_TEMPLATE')
+const WHATSAPP_INTRO_TEMPLATE_LANGUAGE = Deno.env.get('WHATSAPP_INTRO_TEMPLATE_LANGUAGE') || 'fa'
+const WHATSAPP_INTRO_TEMPLATE_PARAMS = Deno.env.get('WHATSAPP_INTRO_TEMPLATE_PARAMS') || ''
 
 // Resend (email) - unset until STEP 14's credential setup is complete.
 const EMAIL_API_KEY = Deno.env.get('RESEND_API_KEY')
@@ -103,7 +108,16 @@ Deno.serve(async (req) => {
       actorUserId: admin.userId,
       testMode,
       credentials: {
-        whatsapp: WHATSAPP_ACCESS_TOKEN && WHATSAPP_PHONE_NUMBER_ID ? { accessToken: WHATSAPP_ACCESS_TOKEN, phoneNumberId: WHATSAPP_PHONE_NUMBER_ID } : null,
+        whatsapp:
+          WHATSAPP_ACCESS_TOKEN && WHATSAPP_PHONE_NUMBER_ID
+            ? {
+                accessToken: WHATSAPP_ACCESS_TOKEN,
+                phoneNumberId: WHATSAPP_PHONE_NUMBER_ID,
+                templateName: WHATSAPP_INTRO_TEMPLATE || null,
+                languageCode: WHATSAPP_INTRO_TEMPLATE_LANGUAGE,
+                templateParams: WHATSAPP_INTRO_TEMPLATE_PARAMS,
+              }
+            : null,
         email: EMAIL_API_KEY && EMAIL_FROM_ADDRESS ? { apiKey: EMAIL_API_KEY, fromAddress: EMAIL_FROM_ADDRESS, fromName: EMAIL_FROM_NAME, replyTo: EMAIL_REPLY_TO } : null,
       },
       testRecipients: { whatsapp: WHATSAPP_TEST_RECIPIENT || null, email: EMAIL_TEST_RECIPIENT || null },

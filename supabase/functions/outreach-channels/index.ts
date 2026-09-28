@@ -17,10 +17,14 @@
 // Auth, same pattern as outreach-auto-email:
 //   1. x-outreach-channels-secret = OUTREACH_CHANNELS_CRON_SECRET (pg_cron)
 //   2. an approved admin's session (the "Run now" button)
+//
+// Body { "mode": "whatsapp_test_send" } (admin session only): ONE approved-
+// template message to WHATSAPP_TEST_RECIPIENT - no lead, no queue, no
+// setting touched (runWhatsAppTestSend).
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { runChannelOutreachCycle } from '../../../src/outreach/channelOutreachPipeline.js'
-import { sendWhatsAppTemplate } from '../../../src/outreach/providers/whatsappProvider.js'
+import { runChannelOutreachCycle, runWhatsAppTestSend } from '../../../src/outreach/channelOutreachPipeline.js'
+import { introTemplateParameters, sendWhatsAppTemplate } from '../../../src/outreach/providers/whatsappProvider.js'
 import { sendBaleBot, sendBaleSafir } from '../../../src/outreach/providers/baleProvider.js'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
@@ -35,6 +39,7 @@ const WHATSAPP = {
   languageCode: Deno.env.get('WHATSAPP_INTRO_TEMPLATE_LANGUAGE') || 'fa',
   params: Deno.env.get('WHATSAPP_INTRO_TEMPLATE_PARAMS') || '',
 }
+const WHATSAPP_TEST_RECIPIENT = Deno.env.get('WHATSAPP_TEST_RECIPIENT') || null
 const BALE = {
   safirApiKey: Deno.env.get('BALE_SAFIR_API_KEY') || null,
   safirBotId: Deno.env.get('BALE_SAFIR_BOT_ID') || null,
@@ -86,11 +91,29 @@ Deno.serve(async (req) => {
         recipient,
         templateName: WHATSAPP.templateName,
         languageCode: WHATSAPP.languageCode,
-        bodyParameters: WHATSAPP.params === 'company_name' ? [lead.company_name || 'شرکت شما'] : [],
+        bodyParameters: introTemplateParameters(WHATSAPP.params, lead),
       }),
     baleSafir: ({ phoneNumber, text, requestId }: { phoneNumber: string; text: string; requestId: string }) =>
       sendBaleSafir({ apiKey: BALE.safirApiKey, botId: BALE.safirBotId, phoneNumber, text, requestId }),
     baleBot: ({ chatId, text }: { chatId: string; text: string }) => sendBaleBot({ token: BALE.botToken, chatId, text }),
+  }
+
+  let mode = null
+  try {
+    mode = (await req.json())?.mode || null
+  } catch {
+    mode = null
+  }
+  if (mode === 'whatsapp_test_send') {
+    if (auth.actorType !== 'admin') return jsonResponse({ ok: false, error: 'admin_only' }, 403)
+    try {
+      const result = await runWhatsAppTestSend(client, { credentials: { whatsapp: WHATSAPP }, providers, testRecipient: WHATSAPP_TEST_RECIPIENT })
+      console.log('outreach-channels: whatsapp test send', JSON.stringify({ outcome: result.outcome, missing: result.missing, errorCode: result.errorCode }))
+      return jsonResponse({ ok: true, ...result, duration_ms: Date.now() - startedAt })
+    } catch (err) {
+      console.error('outreach-channels: test send failed', err instanceof Error ? err.message : 'unknown_error')
+      return jsonResponse({ ok: false, error: 'test_send_failed', duration_ms: Date.now() - startedAt }, 500)
+    }
   }
 
   try {

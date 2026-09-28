@@ -647,6 +647,8 @@ function makeFakeClient() {
     lead_activities: [],
     automation_settings: [{ id: 1, ...baseSettings }],
     email_outreach_recipients: [],
+    channel_outreach_messages: [],
+    channel_outreach_events: [],
   }
   let nextId = 1
   const newId = (table) => `${table}-${nextId++}`
@@ -734,6 +736,7 @@ function makeFakeClient() {
     }
     const chain = {
       eq: (field, value) => (filters.push(['eq', field, value]), chain),
+      in: (field, value) => (filters.push(['in', field, value]), chain),
       select: () => ({
         single: async () => (willFail ? { data: null, error: { message: `simulated update failure on ${table}` } } : { data: apply()[0] || null, error: null }),
         then: (resolve) => resolve(willFail ? { data: null, error: { message: `simulated update failure on ${table}` } } : { data: apply(), error: null }),
@@ -770,7 +773,24 @@ function makeFakeClient() {
     }
   }
 
+  // claim_channel_send (phase37): the per-destination/per-lead part that the
+  // manual path relies on. The full rule set (gap, 20/day cap, closed) is
+  // exercised against the shared claim in checkChannelOutreach.mjs.
+  async function rpc(name, a) {
+    assert.equal(name, 'claim_channel_send')
+    const row = tables.channel_outreach_messages.find((m) => m.channel === a.p_channel && m.normalized_destination === a.p_destination)
+    const out = (result, r) => ({ data: { result, id: r?.id || null, until: null }, error: null })
+    if (row && (row.lead_id !== a.p_lead_id || !(['queued', 'waiting_provider'].includes(row.status) || (row.status === 'failed' && a.p_source === 'manual')))) return out(row.status === 'opted_out' ? 'opted_out' : 'duplicate', row)
+    const lead = tables.sales_leads.find((l) => l.id === a.p_lead_id)
+    if (lead?.do_not_contact) return out('opted_out', row)
+    const claimed = row || { id: newId('channel_outreach_messages'), channel: a.p_channel, normalized_destination: a.p_destination, lead_id: a.p_lead_id, contact_source: 'manual_send' }
+    Object.assign(claimed, { status: 'sending', claimed_at: new Date().toISOString(), claim_source: a.p_source, suggestion_id: a.p_suggestion_id })
+    if (!row) tables.channel_outreach_messages.push(claimed)
+    return out('claimed', claimed)
+  }
+
   return {
+    rpc,
     from(table) {
       return {
         select: (selectStr) => selectChain(table, selectStr),
@@ -785,7 +805,7 @@ function makeFakeClient() {
 }
 
 const validCredentials = {
-  whatsapp: { accessToken: 'tok', phoneNumberId: '123' },
+  whatsapp: { accessToken: 'tok', phoneNumberId: '123', templateName: 'hinza_intro', languageCode: 'fa', templateParams: 'company_name' },
   email: { apiKey: 'key', fromAddress: 'sales@hinzapolymer.com' },
 }
 
@@ -872,7 +892,7 @@ await check('attemptSend: a test-mode send never logs lead_activities or stamps 
   }
 })
 
-await check('attemptSend: a production-mode (testMode=false) successful send DOES log lead_activities and stamp last_contact_at', async () => {
+await check('attemptSend: a production-mode (testMode=false) WhatsApp send logs lead_activities but does NOT stamp last_contact_at (the lead stays eligible for email)', async () => {
   const client = makeFakeClient()
   client.tables.automation_settings[0].provider_test_mode = false
   await client.from('prospect_outreach_suggestions').insert(baseSuggestion())
@@ -882,7 +902,60 @@ await check('attemptSend: a production-mode (testMode=false) successful send DOE
     assert.equal(result.ok, true)
     assert.equal(client.tables.lead_activities.length, 1)
     assert.equal(client.tables.lead_activities[0].activity_type, 'whatsapp')
-    assert.ok(client.tables.sales_leads[0].last_contact_at)
+    assert.equal(client.tables.sales_leads[0].last_contact_at ?? null, null)
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('attemptSend: a production WhatsApp send is an approved template and takes the SAME claim as the automatic runner', async () => {
+  const client = makeFakeClient()
+  client.tables.automation_settings[0].provider_test_mode = false
+  await client.from('prospect_outreach_suggestions').insert(baseSuggestion())
+  const bodies = []
+  mockFetch(async (url, options) => (bodies.push(JSON.parse(options.body)), jsonFetchResponse({ messages: [{ id: 'wamid.MAN1' }] })))
+  try {
+    const result = await attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: validCredentials, testRecipients, now: noon })
+    assert.equal(result.ok, true)
+    assert.equal(bodies[0].type, 'template')
+    assert.equal(bodies[0].template.components[0].parameters[0].text, 'شرکت نمونه')
+    const row = client.tables.channel_outreach_messages[0]
+    assert.equal(row.status, 'sent')
+    assert.equal(row.claim_source, 'manual')
+    assert.equal(row.provider_message_id, 'wamid.MAN1')
+    assert.equal(row.provider_status, 'accepted', 'acceptance is never "delivered"')
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('attemptSend: a number the automatic runner already messaged is blocked before any provider call', async () => {
+  const client = makeFakeClient()
+  client.tables.automation_settings[0].provider_test_mode = false
+  client.tables.channel_outreach_messages.push({ id: 'auto-1', channel: 'whatsapp', normalized_destination: '+989121234567', lead_id: 'lead-1', status: 'sent', claim_source: 'auto' })
+  await client.from('prospect_outreach_suggestions').insert(baseSuggestion())
+  let calls = 0
+  mockFetch(async () => (calls++, jsonFetchResponse({ messages: [{ id: 'wamid.X' }] })))
+  try {
+    const result = await attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: validCredentials, testRecipients, now: noon })
+    assert.equal(result.ok, false)
+    assert.equal(calls, 0)
+    assert.equal(client.tables.outreach_attempts.at(-1).status, 'cancelled', 'recorded as a blocked (cancelled) attempt')
+  } finally {
+    restoreFetch()
+  }
+})
+
+await check('attemptSend: a production WhatsApp send without an approved template is refused (Meta rejects cold free text)', async () => {
+  const client = makeFakeClient()
+  client.tables.automation_settings[0].provider_test_mode = false
+  await client.from('prospect_outreach_suggestions').insert(baseSuggestion())
+  let calls = 0
+  mockFetch(async () => (calls++, jsonFetchResponse({ messages: [{ id: 'wamid.X' }] })))
+  try {
+    const result = await attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: { ...validCredentials, whatsapp: { accessToken: 'tok', phoneNumberId: '123' } }, testRecipients, now: noon })
+    assert.equal(result.ok, false)
+    assert.equal(calls, 0)
   } finally {
     restoreFetch()
   }
@@ -965,11 +1038,11 @@ await check('attemptSend: a production provider failure is recorded as status=fa
   const client = makeFakeClient()
   client.tables.automation_settings[0].provider_test_mode = false
   await client.from('prospect_outreach_suggestions').insert(baseSuggestion())
-  mockFetch(async () => jsonFetchResponse({ error: { code: 500, message: 'Internal error' } }, { ok: false, status: 500 }))
+  mockFetch(async () => jsonFetchResponse({ error: { code: 132001, message: 'Template name does not exist' } }, { ok: false, status: 400 }))
   try {
     const result = await attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: validCredentials, testRecipients, now: noon })
     assert.equal(result.ok, false)
-    assert.equal(result.errorCode, '500')
+    assert.equal(result.errorCode, '132001')
     const attempt = client.tables.outreach_attempts[0]
     assert.equal(attempt.status, 'failed')
     const suggestion = client.tables.prospect_outreach_suggestions[0]
@@ -987,7 +1060,7 @@ await check('attemptSend: a retry AFTER a definite (known) provider failure is a
   let call = 0
   mockFetch(async () => {
     call += 1
-    return call === 1 ? jsonFetchResponse({ error: { code: 500, message: 'Internal error' } }, { ok: false, status: 500 }) : jsonFetchResponse({ messages: [{ id: 'wamid.RETRY_OK' }] })
+    return call === 1 ? jsonFetchResponse({ error: { code: 132001, message: 'Template name does not exist' } }, { ok: false, status: 400 }) : jsonFetchResponse({ messages: [{ id: 'wamid.RETRY_OK' }] })
   })
   try {
     const first = await attemptSend(client, { suggestionId: 'sugg-1', actorUserId: 'admin-1', testMode: false, credentials: validCredentials, testRecipients, now: noon })
@@ -1094,7 +1167,7 @@ await check('attemptSend: two concurrent RETRIES racing to reclaim the SAME fail
   let providerCalls = 0
   mockFetch(async () => {
     providerCalls += 1
-    return jsonFetchResponse({ error: { code: 500, message: 'still failing' } }, { ok: false, status: 500 })
+    return jsonFetchResponse({ error: { code: 132001, message: 'still failing' } }, { ok: false, status: 400 })
   })
   // Seed a genuine prior FAILURE first (sequential), so the claim row exists
   // in the one state that is ever reclaimable at all.
